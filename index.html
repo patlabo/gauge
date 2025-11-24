@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Live PSI Gauge with Session Logging and CSV Export</title>
+    <title>Live PSI Gauge - Session Management</title>
     <!-- Load Tailwind CSS for modern, responsive styling -->
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
@@ -14,8 +14,6 @@
             background-color: #0d1117; /* Dark background */
         }
         .gauge-display {
-            /* Ensures text takes up most of the screen vertically */
-            min-height: 40vh;
             display: flex;
             flex-direction: column;
             justify-content: center;
@@ -27,46 +25,93 @@
             color: #6b7280; /* Gray-500 */
             margin-top: -1.5rem; /* Pull unit closer to the number */
         }
-        .controls {
-            padding: 1rem 0;
-        }
-        /* Ensure the body and html take up full height for the main container to stretch */
+        /* Ensure the body and html take up full height */
         html, body {
             height: 100%;
             margin: 0;
+            overflow-y: auto; /* Allow scrolling for the main view */
+            overflow-x: hidden;
         }
-        /* Media query to reduce the height of the gauge area slightly in landscape to save vertical space */
+        
+        /* Modal Backdrop Style */
+        .modal-backdrop {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.8);
+            z-index: 20;
+            display: none; /* Controlled by JS */
+            align-items: center;
+            justify-content: center;
+        }
+        
+        /* Modal Content Style (The Session Panel) */
+        .session-panel {
+            background-color: #1f2937; /* Darker blue-gray */
+            max-height: 90vh;
+            width: 95%;
+            max-width: 600px;
+            overflow-y: auto;
+        }
+        
+        /* --- LANDSCAPE FULL-SCREEN HIDING LOGIC --- */
         @media (orientation: landscape) {
-            .gauge-display {
-                min-height: 50vh; /* Reduced from 40vh to 50vh of the *initial* container */
+            /* Base hidden state for header and controls in landscape mode */
+            .hide-in-landscape {
+                opacity: 0 !important;
+                pointer-events: none !important; 
+                visibility: hidden !important;
+            }
+            
+            /* State applied by JS on tap */
+            .show-in-landscape {
+                opacity: 1 !important;
+                pointer-events: auto !important; 
+                visibility: visible !important;
             }
         }
-        
-        /* Custom utility class for the download instruction text */
-        .download-info-text {
-            color: #3b82f6; /* Blue-500 */
-            font-weight: 500;
-        }
+        /* --- END LANDSCAPE LOGIC --- */
     </style>
 </head>
-<!-- min-h-screen ensures we can scroll if content exceeds viewport height (CRITICAL for landscape) -->
 <body class="text-white">
-    <div class="flex flex-col min-h-screen p-4 pb-4 md:pb-8"> 
+
+    <!-- Session Management Panel (Modal) -->
+    <div id="sessionModalBackdrop" class="modal-backdrop">
+        <div class="session-panel p-6 rounded-xl shadow-2xl transition-all duration-300 transform scale-95 opacity-0">
+            <h2 class="text-2xl font-bold mb-4 text-blue-300 border-b border-gray-600 pb-2">All Recorded Sessions</h2>
+            
+            <p id="sessionListStatus" class="text-yellow-400 mb-4">Loading sessions from Firestore...</p>
+            
+            <div id="sessionsList" class="space-y-3 max-h-96 overflow-y-auto pr-2">
+                <!-- Session items will be dynamically inserted here -->
+            </div>
+            
+            <button onclick="closeSessionPanel()"
+                    class="w-full mt-6 py-3 text-lg font-semibold rounded-xl transition-all duration-200 shadow-lg 
+                           bg-gray-600 hover:bg-gray-700 active:scale-95">
+                Close
+            </button>
+        </div>
+    </div>
+    <!-- End Session Management Panel -->
+
+
+    <!-- Main Flex Container: Column layout, minimum full screen height -->
+    <div id="mainAppContainer" class="flex flex-col min-h-screen p-4 pb-4 md:pb-8"> 
         
-        <header class="text-center py-4">
-            <h1 class="text-2xl font-bold text-blue-400">ESP32 Live Pressure Gauge</h1>
+        <!-- HEADER CONTAINER (Hidden by default in landscape) -->
+        <header id="headerContainer" class="text-center py-2 transition-opacity duration-300 hide-in-landscape">
+            <h1 class="text-xl font-bold text-blue-400">PSI Gauge</h1>
             <p id="status" class="text-sm mt-1 text-yellow-500">
                 Connection Status: Disconnected
             </p>
-            <p class="text-xs mt-1 text-gray-400">
-                Open with Bluefy or another Web Bluetooth-enabled browser on iOS.
-            </p>
         </header>
 
-        <!-- Main Gauge Display: flex-grow ensures it fills available space, keeping it centered -->
+        <!-- Main Gauge Display: flex-grow ensures it fills available space dynamically -->
         <main class="flex-grow gauge-display">
-            <div class="p-8 rounded-xl shadow-2xl bg-gray-800 bg-opacity-50">
-                <!-- Added overflow-x-auto to ensure numbers don't break layout if they are huge -->
+            <div class="p-8 rounded-xl shadow-2xl bg-gray-800 bg-opacity-50 gauge-card">
                 <div class="overflow-x-auto"> 
                     <span id="psiValue" class="text-9xl md:text-[12rem] font-extrabold tracking-tight text-white transition-all duration-300 whitespace-nowrap">
                         --.-
@@ -76,13 +121,13 @@
             </div>
         </main>
 
-        <!-- Controls and Logs: Adjusted spacing and sizes for better fit, especially in landscape -->
-        <div class="p-2 pt-4 bg-gray-900 shadow-2xl border-t border-gray-700 z-10 w-full mx-auto max-w-lg rounded-t-xl">
+        <!-- CONTROLS CONTAINER (Hidden by default in landscape) -->
+        <div id="controlsContainer" class="p-2 pt-4 bg-gray-900 shadow-2xl border-t border-gray-700 z-10 w-full mx-auto max-w-lg rounded-t-xl transition-opacity duration-300 hide-in-landscape">
             <!-- Bluetooth Connect Button -->
             <button id="connectButton" onclick="requestDeviceAndConnect()"
                     class="w-full py-3 text-lg font-semibold rounded-xl transition-all duration-200 shadow-lg 
                            bg-blue-600 hover:bg-blue-700 active:scale-95">
-                Connect to ESP32 Gauge
+                Connect to ESP32
             </button>
             
             <div class="flex space-x-3 mt-3">
@@ -102,23 +147,20 @@
             </div>
 
             
-            <!-- Data Log Status and Export -->
+            <!-- Data Log Status and Session Management Button -->
             <div class="mt-4 p-3 bg-gray-800 rounded-lg">
                 <div id="sessionStatus" class="text-gray-400 text-sm space-y-1 flex flex-col">
-                    <p id="logStatus" class="text-red-500 font-semibold">Connecting to database...</p>
+                    <p id="logStatus" class="text-yellow-500 font-semibold">DB Status: Initializing...</p>
                     <p id="sessionCount" class="text-gray-500">Points: 0</p>
-                    <!-- Dedicated line for download instructions -->
-                    <p id="downloadInstruction" class="download-info-text text-xs hidden mt-1">
-                        Pour l'ouvrir, vérifiez le gestionnaire de téléchargement de Bluefy (ou Safari) en haut à droite.
-                    </p>
                 </div>
                 
-                <!-- Export Button -->
-                <button id="exportButton" onclick="exportSessionLog()" disabled
+                <!-- Session Management Button -->
+                <button id="manageSessionsButton" onclick="openSessionPanel()" disabled
                         class="w-full mt-3 py-2 text-md font-medium rounded-xl transition-all duration-200 shadow-lg disabled:opacity-50
                             bg-green-600 hover:bg-green-700 active:scale-95">
-                    Download Log (.csv)
+                    Manage & Download Sessions
                 </button>
+                <p class="text-xs text-gray-500 mt-2 text-center">View all recorded sessions for easy export later.</p>
             </div>
         </div>
         
@@ -128,7 +170,7 @@
         // Firebase Imports
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
         import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import { getFirestore, collection, addDoc, query, where, getDocs, setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { getFirestore, collection, addDoc, query, where, getDocs, setLogLevel, limit, getCountFromServer, orderBy } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
         // IMPORTANT: Set Firestore logging level to Debug to see potential errors
         setLogLevel('debug'); 
@@ -170,6 +212,7 @@
         let isAuthReady = false; // Auth flag is critical
         let currentSessionId = null; 
         let sessionDataPoints = 0; 
+        let controlsVisible = false; // State for tap-to-show feature
 
         // UI Elements
         const psiValueElement = document.getElementById('psiValue');
@@ -179,202 +222,190 @@
         const startStopLogButton = document.getElementById('startStopLogButton');
         const logStatusElement = document.getElementById('logStatus');
         const sessionCountElement = document.getElementById('sessionCount'); 
-        const exportButton = document.getElementById('exportButton'); 
-        const downloadInstructionElement = document.getElementById('downloadInstruction');
+        const manageSessionsButton = document.getElementById('manageSessionsButton'); // New button
+        const headerContainer = document.getElementById('headerContainer');
+        const controlsContainer = document.getElementById('controlsContainer');
+        const sessionModalBackdrop = document.getElementById('sessionModalBackdrop');
+        const sessionPanelContent = sessionModalBackdrop.querySelector('.session-panel');
+        const sessionsListElement = document.getElementById('sessionsList');
+        const sessionListStatusElement = document.getElementById('sessionListStatus');
+        
+        // Tailwind color classes to manage
+        const COLOR_CLASSES = ['text-white', 'text-yellow-400', 'text-orange-400', 'text-red-500'];
+
+        // --- Utility Functions for Session Management ---
 
         /**
-         * Initialize Firebase and perform custom authentication.
+         * Opens the session management panel and loads all session IDs.
          */
-        async function initializeFirebase() {
-            logStatusElement.textContent = "Connecting to database...";
-
-            try {
-                // Check if the critical configuration is missing 
-                if (!FIREBASE_CONFIG.apiKey || !FIREBASE_CONFIG.projectId) {
-                    throw new Error("Missing Firebase Credentials. Please update FIREBASE_CONFIG in the script.");
-                }
-
-                const app = initializeApp(FIREBASE_CONFIG);
-                db = getFirestore(app);
-                auth = getAuth(app);
-                
-                // AUTHENTICATION: Using Anonymous Sign-in (must be enabled in console)
-                await signInAnonymously(auth);
-                
-                // Once authenticated, set user ID and ready flag
-                userId = auth.currentUser?.uid || crypto.randomUUID();
-                isAuthReady = true;
-                
-                logStatusElement.textContent = `DB Ready. User ID: ${userId.substring(0, 8)}...`;
-                logStatusElement.classList.remove('text-red-500');
-                logStatusElement.classList.add('text-green-500');
-
-                sessionCountElement.textContent = "Points: 0";
-                
-                // If a stream is active (mock or BLE), enable the logging button
-                if (bleDevice || isMockingData) {
-                    startStopLogButton.disabled = false;
-                }
-
-            } catch (error) {
-                console.error("Firebase Initialization or Auth Error:", error);
-                
-                let displayError = "Database Error: Check Console";
-                if (error.message.includes("Missing Firebase Credentials")) {
-                    displayError = "!!! REPLACE FIREBASE CREDENTIALS !!!";
-                } else if (error.message.includes("projectId")) {
-                    displayError = "DB Config Failed. Check Project ID.";
-                } else if (error.code) {
-                     displayError = `DB Auth Failed: ${error.code}`;
-                }
-
-                // CRITICAL: Ensure the core connection buttons are always enabled, 
-                // even if Firebase fails, so the user can still use the gauge.
-                connectButton.disabled = false;
-                mockButton.disabled = false;
-                
-                logStatusElement.textContent = displayError;
-                logStatusElement.classList.remove('text-green-500');
-                logStatusElement.classList.add('text-red-500');
-
-                isAuthReady = false;
-                startStopLogButton.disabled = true;
-                exportButton.disabled = true;
-            }
-        }
-
-        /**
-         * Toggles the data logging state on/off.
-         */
-        window.toggleLogging = function() {
+        window.openSessionPanel = function() {
             if (!isAuthReady) {
-                logStatusElement.textContent = "DB Not Ready: Check config or connection.";
-                return;
-            }
-
-            if (!bleDevice && !isMockingData) {
-                updateStatus("Error: Start a data stream (live or mock) before logging.", true);
+                alert("Database is not ready. Please wait for initialization.");
                 return;
             }
             
-            isLogging = !isLogging;
-            
-            if (isLogging) {
-                // START LOGGING: Create a new session ID
-                currentSessionId = Date.now().toString(); 
-                sessionDataPoints = 0; 
-                exportButton.disabled = true;
-                downloadInstructionElement.classList.add('hidden'); // Hide instructions during logging
-                
-                startStopLogButton.textContent = "Stop Logging";
-                startStopLogButton.classList.remove('bg-orange-500', 'hover:bg-orange-600');
-                startStopLogButton.classList.add('bg-red-600', 'hover:bg-red-700');
-                
-                logStatusElement.textContent = `Recording Session ${currentSessionId.slice(-4)}...`;
-                logStatusElement.classList.remove('text-green-500', 'text-red-500', 'text-blue-600');
-                logStatusElement.classList.add('text-blue-400'); // Blue for active recording
-                
-                updateStatus("Data LOGGING STARTED", false, true);
-                console.log(`[LOGGING] Session started: ${currentSessionId}`); 
+            // Show modal
+            sessionModalBackdrop.style.display = 'flex';
+            // Trigger animation
+            setTimeout(() => {
+                sessionPanelContent.classList.remove('scale-95', 'opacity-0');
+                sessionPanelContent.classList.add('scale-100', 'opacity-100');
+            }, 10);
 
-            } else {
-                // STOP LOGGING
-                startStopLogButton.textContent = "Start Logging";
-                startStopLogButton.classList.remove('bg-red-600', 'hover:bg-red-700');
-                startStopLogButton.classList.add('bg-orange-500', 'hover:bg-orange-600');
-                
-                logStatusElement.textContent = `Session ${currentSessionId.slice(-4)} FINISHED. Ready to Download.`;
-                logStatusElement.classList.remove('text-blue-400');
-                logStatusElement.classList.add('text-green-500');
-
-                sessionCountElement.textContent = `Points: ${sessionDataPoints} logged`;
-
-                exportButton.disabled = (sessionDataPoints === 0); // Only enable export if points were logged
-                updateStatus("Data Logging STOPPED. Stream still running.");
-                console.log(`[LOGGING] Session finished. Total points: ${sessionDataPoints}`); 
-            }
+            loadAllSessions();
         }
 
         /**
-         * Saves a pressure reading to Firestore.
-         * @param {number} psiValue - The pressure value (PSI).
+         * Closes the session management panel.
          */
-        async function logPressureReading(psiValue) {
-            // CRITICAL CHECK: Ensure auth is ready before attempting to save
-            if (!isAuthReady || !userId || !currentSessionId) {
+        window.closeSessionPanel = function() {
+            sessionPanelContent.classList.remove('scale-100', 'opacity-100');
+            sessionPanelContent.classList.add('scale-95', 'opacity-0');
+            
+            setTimeout(() => {
+                sessionModalBackdrop.style.display = 'none';
+            }, 300); // Wait for transition
+        }
+
+
+        /**
+         * Helper function to get the base path for user-specific logs.
+         * @returns {string} The Firestore collection path.
+         */
+        function getLogCollectionPath() {
+            // Path: /artifacts/{appId}/users/{userId}/pressure_logs
+            return `/artifacts/${appId}/users/${userId}/${LOG_COLLECTION_NAME}`;
+        }
+        
+        /**
+         * Fetches a list of all unique Session IDs for the current user.
+         */
+        async function loadAllSessions() {
+            sessionListStatusElement.textContent = "Loading sessions from Firestore...";
+            sessionsListElement.innerHTML = '';
+            
+            if (!isAuthReady || !userId) {
+                sessionListStatusElement.textContent = "Error: Authentication not complete.";
                 return;
             }
-            
-            // Note: We use the FIREBASE_CONFIG.projectId as the artifact appId for simplicity when manual setup is used.
-            // PATH: /artifacts/oil-pressure-gauge/users/{USER_ID}/pressure_logs
-            const logPath = `/artifacts/${appId}/users/${userId}/${LOG_COLLECTION_NAME}`;
 
             try {
-                // We do NOT await this addDoc to prevent blocking the main thread 
-                // and preserve high log rate. We use .then() for count update.
-                addDoc(collection(db, logPath), {
-                    psi: psiValue,
-                    timestamp: Date.now(), 
-                    sessionId: currentSessionId, 
-                }).then(() => {
-                    // This block executes ONLY if the write was successful
-                    sessionDataPoints++; // Increment count only on successful save
-                    if (isLogging) {
-                        sessionCountElement.textContent = `Points: ${sessionDataPoints}`;
-                    }
-                }).catch(error => {
-                    // This error is crucial if logging fails; usually due to Security Rules.
-                    console.error("CRITICAL ERROR writing document to Firestore (Check Security Rules!):", error); 
-                });
+                // 1. Get all documents and group by sessionId
+                const logPath = getLogCollectionPath();
+                const q = query(collection(db, logPath));
                 
+                const snapshot = await getDocs(q);
+                const sessionsMap = {}; // Map to store {sessionId: {count: N, startTimestamp: T}}
+                
+                // Aggregate data to find unique sessions and count points
+                snapshot.forEach(doc => {
+                    const data = doc.data();
+                    const sessionId = data.sessionId;
+                    const timestamp = data.timestamp;
+
+                    if (!sessionsMap[sessionId]) {
+                        // Use the sessionId (which is the start timestamp) as the unique ID
+                        sessionsMap[sessionId] = { 
+                            count: 0, 
+                            sessionId: sessionId, 
+                            startTimestamp: Number(sessionId) // The sessionId is the starting timestamp
+                        };
+                    }
+                    sessionsMap[sessionId].count++;
+                });
+
+                const sessionList = Object.values(sessionsMap).sort((a, b) => b.startTimestamp - a.startTimestamp);
+                
+                if (sessionList.length === 0) {
+                    sessionListStatusElement.textContent = "No sessions recorded yet.";
+                    return;
+                }
+
+                // 2. Render the list
+                sessionListStatusElement.textContent = `${sessionList.length} total sessions found.`;
+                
+                sessionList.forEach(session => {
+                    const sessionDate = new Date(session.startTimestamp).toLocaleString();
+                    const item = document.createElement('div');
+                    item.className = 'flex justify-between items-center p-3 bg-gray-700 rounded-lg hover:bg-gray-600 cursor-pointer transition-colors duration-150 shadow-md';
+                    item.innerHTML = `
+                        <div class="flex flex-col">
+                            <span class="text-white font-semibold text-base">${sessionDate}</span>
+                            <span class="text-gray-400 text-xs">Points: ${session.count}</span>
+                        </div>
+                        <button data-session-id="${session.sessionId}" 
+                                class="download-btn bg-green-500 hover:bg-green-600 text-white text-sm py-1 px-3 rounded-md transition-colors duration-150">
+                            Download CSV
+                        </button>
+                    `;
+                    sessionsListElement.appendChild(item);
+                });
+
+                // 3. Attach click handlers to the new download buttons
+                sessionsListElement.querySelectorAll('.download-btn').forEach(button => {
+                    button.addEventListener('click', (e) => {
+                        const sessionId = e.target.getAttribute('data-session-id');
+                        exportSessionLog(sessionId);
+                    });
+                });
+
             } catch (error) {
-                console.error("Synchronous logPressureReading Error:", error);
+                console.error("Error loading sessions:", error);
+                sessionListStatusElement.textContent = "Error loading sessions. Check console for details.";
             }
         }
 
+
         /**
-         * Fetches all documents for the last completed session and exports them as CSV.
+         * Fetches all documents for the specified session ID and exports them as CSV.
+         * @param {string} sessionIdToExport - The full Session ID (timestamp string) to retrieve.
          */
-        window.exportSessionLog = async function() {
-            if (!currentSessionId || isLogging || !isAuthReady) {
-                logStatusElement.textContent = "Error: Stop logging first or DB not ready.";
-                return;
-            }
-            if (sessionDataPoints === 0) {
-                 logStatusElement.textContent = "Error: No points to download!";
+        window.exportSessionLog = async function(sessionIdToExport) {
+            
+            // Disable the panel buttons temporarily
+            sessionsListElement.querySelectorAll('.download-btn').forEach(btn => {
+                btn.disabled = true;
+                if (btn.getAttribute('data-session-id') === sessionIdToExport) {
+                    btn.textContent = "Downloading...";
+                }
+            });
+
+            if (!isAuthReady || !userId || isLogging) {
+                console.error("Cannot export: Auth not ready or logging is active.");
+                alert("Cannot export: Please stop logging and ensure the database is ready.");
+                // Re-enable buttons if error occurs
+                sessionsListElement.querySelectorAll('.download-btn').forEach(btn => btn.disabled = false);
                 return;
             }
 
-            exportButton.disabled = true;
-            exportButton.textContent = "Fetching Data...";
-            
-            const exportId = currentSessionId;
-            const logPath = `/artifacts/${appId}/users/${userId}/${LOG_COLLECTION_NAME}`;
-            
-            // Query for all documents matching the completed session ID
-            const q = query(collection(db, logPath), where("sessionId", "==", exportId));
+            const logPath = getLogCollectionPath();
+            // CRITICAL: Query MUST use the exact sessionId
+            const q = query(collection(db, logPath), where("sessionId", "==", sessionIdToExport));
             
             try {
                 const snapshot = await getDocs(q);
                 let csvContent = "Timestamp (ISO),Time (Local),PSI\n";
+                let downloadedCount = 0;
                 
                 snapshot.forEach(doc => {
                     const data = doc.data();
                     const date = new Date(data.timestamp);
                     const isoTime = date.toISOString();
-                    // Include milliseconds for high-resolution logs
+                    // Local time for easy reading
                     const localTime = date.toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit', fractionalSecondDigits: 3 });
                     
                     csvContent += `${isoTime},${localTime},${data.psi.toFixed(2)}\n`;
+                    downloadedCount++;
                 });
 
-                if (snapshot.docs.length === 0) {
-                     logStatusElement.textContent = "0 Points Fetched!";
+                if (downloadedCount === 0) {
+                     sessionListStatusElement.textContent = `No data found for session ${sessionIdToExport}.`;
                 } else {
                     
                     // 1. Trigger the download 
                     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-                    const fileName = `PSI_Log_${new Date(Number(exportId)).toISOString().slice(0, 19).replace('T', '_')}.csv`;
+                    // Filename is based on the session ID (the starting timestamp)
+                    const fileName = `PSI_Log_${new Date(Number(sessionIdToExport)).toISOString().slice(0, 19).replace('T', '_')}.csv`;
                     
                     const link = document.createElement('a');
                     link.href = URL.createObjectURL(blob);
@@ -384,22 +415,228 @@
                     link.click();
                     document.body.removeChild(link);
                     
-                    // 2. Update Status and Instructions
-                    logStatusElement.textContent = `Download Successful! ${snapshot.docs.length} points exported.`;
-                    downloadInstructionElement.classList.remove('hidden');
+                    // 2. Update Status
+                    sessionListStatusElement.textContent = `Downloaded ${downloadedCount} points for session ${sessionIdToExport}.`;
                 }
                 
             } catch (error) {
                 console.error("CSV Export Error:", error);
-                logStatusElement.textContent = "Export Failed!";
+                sessionListStatusElement.textContent = "CSV Export Failed!";
             }
             
-            // Re-enable the button after a delay
-            setTimeout(() => {
-                // Always re-enable export button 
-                exportButton.disabled = false;
-                exportButton.textContent = "Download Log (.csv)";
-            }, 5000);
+            // Re-enable buttons
+            sessionsListElement.querySelectorAll('.download-btn').forEach(btn => {
+                btn.disabled = false;
+                if (btn.getAttribute('data-session-id') === sessionIdToExport) {
+                    btn.textContent = "Download CSV";
+                }
+            });
+            
+            // Close panel after success/failure
+            closeSessionPanel();
+        }
+
+        // --- Layout and BLE/Mock Code (mostly unchanged) ---
+
+        /**
+         * Checks if the device is currently in landscape orientation.
+         */
+        function isLandscape() {
+            // Uses standard window property to detect orientation
+            return window.matchMedia("(orientation: landscape)").matches;
+        }
+
+        /**
+         * Toggles the visibility of the header and control panel on tap, but ONLY in landscape mode.
+         */
+        function toggleControlsOnTap(event) {
+            if (!isLandscape() || sessionModalBackdrop.style.display === 'flex') {
+                return;
+            }
+
+            if (controlsContainer.contains(event.target) || headerContainer.contains(event.target)) {
+                return;
+            }
+            
+            controlsVisible = !controlsVisible;
+
+            const elements = [headerContainer, controlsContainer];
+            const showClass = 'show-in-landscape';
+            const hideClass = 'hide-in-landscape';
+
+            if (controlsVisible) {
+                elements.forEach(el => {
+                    el.classList.remove(hideClass);
+                    el.classList.add(showClass);
+                });
+            } else {
+                elements.forEach(el => {
+                    el.classList.remove(showClass);
+                    el.classList.add(hideClass);
+                });
+            }
+        }
+        
+        /**
+         * Re-applies the default landscape hiding logic if the orientation changes back 
+         */
+        function checkOrientationLayout() {
+            const elements = [headerContainer, controlsContainer];
+            const showClass = 'show-in-landscape';
+            const hideClass = 'hide-in-landscape';
+            
+            if (isLandscape()) {
+                if (!controlsVisible) {
+                    elements.forEach(el => {
+                        el.classList.remove(showClass);
+                        el.classList.add(hideClass);
+                    });
+                }
+            } else {
+                controlsVisible = true;
+                 elements.forEach(el => {
+                    el.classList.remove(hideClass);
+                    el.classList.remove(showClass);
+                });
+            }
+        }
+        
+        window.addEventListener('resize', checkOrientationLayout);
+        document.body.addEventListener('click', toggleControlsOnTap);
+
+
+        /**
+         * Initialize Firebase and perform custom authentication.
+         */
+        async function initializeFirebase() {
+            logStatusElement.textContent = "DB Status: Connecting...";
+
+            try {
+                if (!FIREBASE_CONFIG.apiKey || !FIREBASE_CONFIG.projectId) {
+                    throw new Error("Missing Firebase Credentials. Please update FIREBASE_CONFIG in the script.");
+                }
+
+                const app = initializeApp(FIREBASE_CONFIG);
+                db = getFirestore(app);
+                auth = getAuth(app);
+                
+                // IMPORTANT: Use signInAnonymously if no __initial_auth_token is provided
+                await signInAnonymously(auth);
+                
+                userId = auth.currentUser?.uid || crypto.randomUUID();
+                isAuthReady = true;
+                
+                logStatusElement.textContent = `DB Status: Ready (User ${userId.substring(0, 4)}...)`;
+                logStatusElement.classList.remove('text-red-500', 'text-yellow-500');
+                logStatusElement.classList.add('text-green-500');
+
+                // Enable the session management button
+                manageSessionsButton.disabled = false;
+                
+                if (bleDevice || isMockingData) {
+                    startStopLogButton.disabled = false;
+                }
+
+            } catch (error) {
+                console.error("Firebase Initialization or Auth Error:", error);
+                
+                let displayError = "DB Status: ERROR";
+                if (error.message.includes("Missing Firebase Credentials")) {
+                    displayError = "DB Status: CRITICAL CONFIG ERROR";
+                }
+
+                connectButton.disabled = false;
+                mockButton.disabled = false;
+                
+                logStatusElement.textContent = displayError;
+                logStatusElement.classList.remove('text-green-500');
+                logStatusElement.classList.add('text-red-500');
+
+                isAuthReady = false;
+                startStopLogButton.disabled = true;
+                manageSessionsButton.disabled = true;
+            }
+        }
+
+        /**
+         * Toggles the data logging state on/off.
+         */
+        window.toggleLogging = function() {
+            if (!isAuthReady) {
+                logStatusElement.textContent = "DB Status: Not Ready";
+                return;
+            }
+
+            if (!bleDevice && !isMockingData) {
+                updateStatus("Error: Start data stream first.", true);
+                return;
+            }
+            
+            isLogging = !isLogging;
+            
+            if (isLogging) {
+                // START LOGGING: Create a new session ID (the current timestamp)
+                currentSessionId = Date.now().toString(); 
+                sessionDataPoints = 0; 
+                
+                startStopLogButton.textContent = "Stop Logging";
+                startStopLogButton.classList.remove('bg-orange-500', 'hover:bg-orange-600');
+                startStopLogButton.classList.add('bg-red-600', 'hover:bg-red-700');
+                
+                logStatusElement.textContent = `DB Status: Recording Session...`;
+                logStatusElement.classList.remove('text-green-500', 'text-red-500', 'text-yellow-500');
+                logStatusElement.classList.add('text-blue-400'); // Blue for active recording
+                
+                updateStatus("LIVE - Recording");
+                console.log(`[LOGGING] Session started: ${currentSessionId}`); 
+
+            } else {
+                // STOP LOGGING
+                startStopLogButton.textContent = "Start Logging";
+                startStopLogButton.classList.remove('bg-red-600', 'hover:bg-red-700');
+                startStopLogButton.classList.add('bg-orange-500', 'hover:bg-orange-600');
+                
+                logStatusElement.textContent = `DB Status: Logged ${sessionDataPoints} points (ID: ${currentSessionId.substring(4)}...).`;
+                logStatusElement.classList.remove('text-blue-400', 'text-red-500');
+                logStatusElement.classList.add('text-green-500');
+
+                sessionCountElement.textContent = `Points: ${sessionDataPoints} logged`;
+
+                updateStatus("LIVE - Stopped Logging");
+                console.log(`[LOGGING] Session finished. Total points: ${sessionDataPoints}`); 
+                currentSessionId = null; // Clear session ID
+            }
+        }
+
+        /**
+         * Saves a pressure reading to Firestore.
+         * @param {number} psiValue - The pressure value (PSI).
+         */
+        async function logPressureReading(psiValue) {
+            if (!isAuthReady || !userId || !currentSessionId) {
+                return;
+            }
+            
+            const logPath = getLogCollectionPath();
+
+            try {
+                // We don't use the timestamp for the sessionId, we use the one created at toggleLogging start
+                addDoc(collection(db, logPath), {
+                    psi: psiValue,
+                    timestamp: Date.now(), 
+                    sessionId: currentSessionId, 
+                }).then(() => {
+                    sessionDataPoints++; 
+                    if (isLogging) {
+                        sessionCountElement.textContent = `Points: ${sessionDataPoints}`;
+                    }
+                }).catch(error => {
+                    console.error("CRITICAL ERROR writing document to Firestore (Check Security Rules!):", error); 
+                });
+                
+            } catch (error) {
+                console.error("Synchronous logPressureReading Error:", error);
+            }
         }
 
         /**
@@ -411,7 +648,7 @@
             if (isMock) {
                 statusElement.className = 'text-sm mt-1 text-purple-400';
             } else {
-                statusElement.className = `text-sm mt-1 ${isError ? 'text-red-500' : 'text-yellow-500'}`;
+                statusElement.className = `text-sm mt-1 ${isError ? 'text-red-500' : 'text-green-500'}`;
             }
         }
 
@@ -424,19 +661,20 @@
             if (!isNaN(psi)) {
                 psiValueElement.textContent = psi.toFixed(1); 
                 
-                // Optional: Change gauge color based on pressure
-                if (psi > 120) {
-                    psiValueElement.classList.remove('text-yellow-400', 'text-white');
+                // 1. Remove all color classes first
+                psiValueElement.classList.remove(...COLOR_CLASSES);
+                
+                // 2. Apply color based on new thresholds
+                if (psi <= 10) {
                     psiValueElement.classList.add('text-red-500');
-                } else if (psi > 80) {
-                    psiValueElement.classList.remove('text-red-500', 'text-white');
+                } else if (psi <= 30) {
+                    psiValueElement.classList.add('text-orange-400');
+                } else if (psi <= 40) {
                     psiValueElement.classList.add('text-yellow-400');
                 } else {
-                    psiValueElement.classList.remove('text-red-500', 'text-yellow-400');
                     psiValueElement.classList.add('text-white');
                 }
                 
-                // --- Conditional Logging: Only log if the user has enabled it ---
                 if (isLogging) {
                     logPressureReading(psi);
                 }
@@ -458,15 +696,14 @@
                 mockButton.classList.remove('bg-red-600', 'hover:bg-red-700');
                 mockButton.classList.add('bg-gray-700', 'hover:bg-gray-600');
                 updateGaugeDisplay('--.-');
-                updateStatus("Mock Data Stopped. Ready to connect.");
+                updateStatus("Disconnected");
                 connectButton.disabled = false;
                 startStopLogButton.disabled = true;
-                downloadInstructionElement.classList.add('hidden'); 
                 if (isLogging) toggleLogging();
 
             } else {
                 if (bleDevice && bleDevice.gatt.connected) {
-                    updateStatus("Error: Disconnect real device before running mock data.", true);
+                    updateStatus("Error: Disconnect real device first.", true);
                     return;
                 }
                 isMockingData = true;
@@ -475,10 +712,9 @@
                 mockButton.classList.add('bg-red-600', 'hover:bg-red-700');
                 connectButton.disabled = true;
                 
-                // Only enable logging if DB is ready
                 startStopLogButton.disabled = !isAuthReady;
                 
-                updateStatus("Mock Data Running (Simulating PSI)", false, true);
+                updateStatus("MOCK Data Running", false, true);
 
                 mockDataInterval = setInterval(() => {
                     const delta = (Math.random() * 2) - 1;
@@ -491,18 +727,17 @@
         
         window.requestDeviceAndConnect = async function() {
             if (isMockingData) {
-                updateStatus("Mock data is running. Please stop it before connecting to Bluetooth.", true);
+                updateStatus("Error: Stop mock data first.", true);
                 return;
             }
 
             if (!navigator.bluetooth) {
-                updateStatus("Error: Web Bluetooth not supported in this browser.", true);
-                console.error("Web Bluetooth is not supported in this browser. Please use Bluefy.");
+                updateStatus("Error: Web Bluetooth not supported.", true);
                 return;
             }
 
             try {
-                updateStatus("Requesting device access...");
+                updateStatus("Scanning...");
                 connectButton.disabled = true;
                 connectButton.textContent = "Scanning...";
                 mockButton.disabled = true;
@@ -513,13 +748,13 @@
                 
                 bleDevice.addEventListener('gattserverdisconnected', onDisconnected);
                 
-                updateStatus(`Found device: ${bleDevice.name}. Connecting...`);
+                updateStatus(`Connecting to ${bleDevice.name}...`);
                 await connectGATT();
 
             } catch (error) {
-                updateStatus(`Connection Error: ${error.message}`, true);
+                updateStatus(`Connection Error`, true);
                 connectButton.disabled = false;
-                connectButton.textContent = "Connect to ESP32 Gauge";
+                connectButton.textContent = "Connect to ESP32";
                 mockButton.disabled = false;
             }
         }
@@ -527,31 +762,30 @@
         async function connectGATT() {
             try {
                 const server = await bleDevice.gatt.connect();
-                updateStatus("Connected to GATT server. Discovering services...");
+                updateStatus("Connected. Discovering services...");
                 
                 const service = await server.getPrimaryService(NUS_SERVICE_UUID);
-                updateStatus("Discovered NUS service. Discovering characteristics...");
+                updateStatus("Service found. Discovering characteristic...");
 
                 rxCharacteristic = await service.getCharacteristic(RX_CHAR_UUID);
-                updateStatus("Discovered RX characteristic. Subscribing to notifications...");
+                updateStatus("Subscribing to data stream...");
 
                 await rxCharacteristic.startNotifications();
                 rxCharacteristic.addEventListener('characteristicvaluechanged', handleCharacteristicValueChanged);
 
-                updateStatus("Subscribed to data stream (LIVE)", false);
+                updateStatus("CONNECTED (LIVE)");
                 statusElement.className = 'text-sm mt-1 text-green-500';
                 
-                connectButton.textContent = "Connected (Live)";
+                connectButton.textContent = "CONNECTED";
                 connectButton.disabled = true;
                 mockButton.disabled = true;
 
-                // Only enable logging if DB is ready
                 startStopLogButton.disabled = !isAuthReady;
 
             } catch (error) {
-                updateStatus(`GATT Error: ${error.message}. Check ESP32 NOTIFY property.`, true);
+                updateStatus(`GATT Error: ${error.message}`, true);
                 connectButton.disabled = false;
-                connectButton.textContent = "Connect to ESP32 Gauge";
+                connectButton.textContent = "Connect to ESP32";
                 mockButton.disabled = false;
                 startStopLogButton.disabled = true;
                 if (bleDevice && bleDevice.gatt.connected) {
@@ -561,13 +795,12 @@
         }
 
         function onDisconnected() {
-            updateStatus(`Device disconnected. Attempting to reconnect...`, true);
+            updateStatus(`Disconnected. Reconnecting...`, true);
             psiValueElement.textContent = '--.-';
             connectButton.disabled = false;
-            connectButton.textContent = "Connect to ESP32 Gauge";
+            connectButton.textContent = "Connect to ESP32";
             mockButton.disabled = false;
             startStopLogButton.disabled = true;
-            downloadInstructionElement.classList.add('hidden');
             if (isLogging) toggleLogging();
 
             setTimeout(async () => {
@@ -576,9 +809,9 @@
                         updateStatus("Reconnecting...");
                         await connectGATT();
                     } catch (error) {
-                        updateStatus(`Reconnection failed: ${error.message}`, true);
+                        updateStatus(`Disconnected`, true);
                         connectButton.disabled = false;
-                        connectButton.textContent = "Connect to ESP32 Gauge";
+                        connectButton.textContent = "Connect to ESP32";
                         mockButton.disabled = false;
                     }
                 }
@@ -588,12 +821,13 @@
         // --- Initialization on load ---
         window.onload = () => {
             initializeFirebase();
-            // Ensure core UI is functional immediately
             connectButton.disabled = false;
             mockButton.disabled = false; 
             
             psiValueElement.textContent = '--.-';
-            updateStatus("Ready to connect. Tap the button or start mock data.");
+            updateStatus("Ready to connect");
+            
+            checkOrientationLayout();
         };
 
     </script>
