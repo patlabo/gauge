@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Live PSI Gauge - Final Display Version</title>
+    <title>Live PSI Gauge - Final Display Version (Corrected)</title>
     <!-- Load Tailwind CSS for modern, responsive styling -->
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
@@ -33,7 +33,7 @@
             overflow-x: hidden;
         }
         
-        /* --- LANDSCAPE FULL-SCREEN HIDING LOGIC --- */
+        /* --- LANDSCAPE FULL-SCREEN HIDING LOGIC (For GoPro Recording) --- */
         @media (orientation: landscape) {
             /* Base hidden state for header and controls in landscape mode */
             .hide-in-landscape {
@@ -60,7 +60,7 @@
         <header id="headerContainer" class="text-center py-2 transition-opacity duration-300 hide-in-landscape">
             <h1 class="text-xl font-bold text-blue-400">PSI Live Gauge</h1>
             <p id="status" class="text-sm mt-1 text-yellow-500">
-                Statut: Prêt à connecter
+                Status: Ready to Connect
             </p>
         </header>
 
@@ -84,7 +84,7 @@
             <button id="connectButton" onclick="requestDeviceAndConnect()"
                     class="w-full py-3 text-lg font-semibold rounded-xl transition-all duration-200 shadow-lg 
                            bg-blue-600 hover:bg-blue-700 active:scale-95">
-                Connecter à ESP32
+                Connect to ESP32 (BLE)
             </button>
             
             <div class="flex space-x-3 mt-3">
@@ -92,14 +92,14 @@
                 <button id="mockButton" onclick="toggleMockData()"
                         class="flex-1 py-2 text-base font-medium rounded-xl transition-all duration-200 shadow-lg 
                             bg-gray-700 hover:bg-gray-600 active:scale-95">
-                    Données Simulé
+                    Mock Data
                 </button>
                 
                 <!-- Disconnect Button (Hidden until connected) -->
                 <button id="disconnectButton" onclick="disconnectDevice()"
                         class="flex-1 py-2 text-base font-medium rounded-xl transition-all duration-200 shadow-lg 
                             bg-red-700 hover:bg-red-800 active:scale-95 hidden">
-                    Déconnecter
+                    Disconnect
                 </button>
             </div>
         </div>
@@ -116,8 +116,8 @@
         let rxCharacteristic = null;
         let mockDataInterval = null; 
         let isMockingData = false;
-        let currentMockPsi = 50.0; 
-        let controlsVisible = true; // Start visible in portrait
+        let currentMockPsi = 50.0; // Start mock data in the white range
+        let controlsVisible = true; 
 
         // UI Elements
         const psiValueElement = document.getElementById('psiValue');
@@ -129,7 +129,7 @@
         const controlsContainer = document.getElementById('controlsContainer');
         
         // Tailwind color classes for PSI value
-        const COLOR_CLASSES = ['text-white', 'text-yellow-400', 'text-orange-400', 'text-red-500', 'text-green-500'];
+        const COLOR_CLASSES = ['text-white', 'text-yellow-400', 'text-orange-400', 'text-red-500', 'text-blue-400', 'text-green-500'];
 
         // --- UI & Orientation Management ---
 
@@ -209,43 +209,46 @@
          */
         function updateStatus(text, isError = false, isMock = false) {
             console.log(text);
-            statusElement.textContent = `Statut: ${text}`;
+            statusElement.textContent = `Status: ${text}`;
             if (isMock) {
+                // Purple for mock data status
                 statusElement.className = 'text-sm mt-1 text-purple-400';
             } else {
+                // Green for success/connected, Red for error
                 statusElement.className = `text-sm mt-1 ${isError ? 'text-red-500' : 'text-green-500'}`;
             }
         }
 
         /**
-         * Core function to update the gauge display based on received data.
+         * Core function to update the gauge display based on received data and apply custom colors.
          */
         function updateGaugeDisplay(dataString) {
             const psi = parseFloat(dataString.trim());
             
             if (!isNaN(psi)) {
-                // Update value
+                // Update value, ensuring one decimal place
                 psiValueElement.textContent = psi.toFixed(1); 
                 
                 // 1. Remove all color classes first
                 psiValueElement.classList.remove(...COLOR_CLASSES);
                 
-                // 2. Apply color based on new thresholds (example thresholds)
-                if (psi < 20.0) {
-                    // Critical low pressure (e.g., system failure)
+                // 2. Apply color based on custom thresholds
+                
+                // 0 to 10 PSI: RED
+                if (psi >= 0 && psi < 10) {
                     psiValueElement.classList.add('text-red-500');
-                } else if (psi >= 20.0 && psi < 45.0) {
-                    // Low pressure warning
+                } 
+                // 10 to 30 PSI: ORANGE
+                else if (psi >= 10 && psi < 30) {
                     psiValueElement.classList.add('text-orange-400');
-                } else if (psi >= 45.0 && psi <= 65.0) {
-                    // Nominal operating range
-                    psiValueElement.classList.add('text-green-500');
-                } else if (psi > 65.0 && psi <= 80.0) {
-                    // High pressure warning
+                } 
+                // 30 to 40 PSI: YELLOW
+                else if (psi >= 30 && psi < 40) {
                     psiValueElement.classList.add('text-yellow-400');
-                } else {
-                    // Critical high pressure
-                    psiValueElement.classList.add('text-red-500');
+                } 
+                // >= 40 PSI: WHITE (Nominal/Target)
+                else {
+                    psiValueElement.classList.add('text-white');
                 }
 
             } else {
@@ -273,12 +276,12 @@
                 // STOP MOCKING
                 clearInterval(mockDataInterval);
                 isMockingData = false;
-                mockButton.textContent = "Données Simulé";
+                mockButton.textContent = "Mock Data";
                 mockButton.classList.remove('bg-red-600', 'hover:bg-red-700');
                 mockButton.classList.add('bg-gray-700', 'hover:bg-gray-600');
                 
                 updateGaugeDisplay('--.-');
-                updateStatus("Prêt à connecter");
+                updateStatus("Ready to Connect");
                 
                 connectButton.disabled = false;
                 disconnectButton.classList.add('hidden');
@@ -286,23 +289,26 @@
             } else {
                 // START MOCKING
                 if (bleDevice && bleDevice.gatt.connected) {
-                    updateStatus("Erreur: Déconnectez l'appareil réel d'abord.", true);
+                    updateStatus("Error: Disconnect real device first.", true);
                     return;
                 }
                 isMockingData = true;
-                mockButton.textContent = "Arrêter Simulé";
+                mockButton.textContent = "Stop Mocking";
                 mockButton.classList.remove('bg-gray-700', 'hover:bg-gray-600');
                 mockButton.classList.add('bg-red-600', 'hover:bg-red-700');
                 
                 connectButton.disabled = true;
                 disconnectButton.classList.add('hidden');
                 
-                updateStatus("Données SIMULÉES en cours", false, true);
+                updateStatus("MOCK Data Running", false, true);
 
                 mockDataInterval = setInterval(() => {
-                    // Simulate random pressure changes around 55 PSI (nominal range)
-                    const delta = (Math.random() * 2) - 1; 
-                    currentMockPsi = Math.max(0, Math.min(100, currentMockPsi + delta));
+                    // Simulate pressure changes, cycling through color ranges
+                    const time = Date.now() / 1000;
+                    // Creates a sine wave that ranges roughly between 5 and 65 PSI
+                    let newPsi = 35 + 30 * Math.sin(time * 0.5) + (Math.random() * 5); 
+                    newPsi = Math.max(0, newPsi); // Ensure non-negative
+                    currentMockPsi = newPsi;
                     
                     updateGaugeDisplay(currentMockPsi.toFixed(1));
                 }, 100);
@@ -321,12 +327,12 @@
 
         window.requestDeviceAndConnect = async function() {
             if (isMockingData) {
-                updateStatus("Erreur: Arrêtez les données simulées d'abord.", true);
+                updateStatus("Error: Stop mock data first.", true);
                 return;
             }
 
             if (!navigator.bluetooth) {
-                updateStatus("Erreur: Web Bluetooth non supporté.", true);
+                updateStatus("Error: Web Bluetooth not supported.", true);
                 return;
             }
 
@@ -342,14 +348,14 @@
                 
                 bleDevice.addEventListener('gattserverdisconnected', onDisconnected);
                 
-                updateStatus(`Connexion à ${bleDevice.name}...`);
+                updateStatus(`Connecting to ${bleDevice.name}...`);
                 await connectGATT();
 
             } catch (error) {
                 console.error("[BLE] Request/Connection Error:", error);
-                updateStatus(`Erreur de connexion`, true);
+                updateStatus(`Connection Error`, true);
                 connectButton.disabled = false;
-                connectButton.textContent = "Connecter à ESP32";
+                connectButton.textContent = "Connect to ESP32 (BLE)";
                 mockButton.disabled = false;
             }
         }
@@ -357,29 +363,28 @@
         async function connectGATT() {
             try {
                 const server = await bleDevice.gatt.connect();
-                updateStatus("Connecté. Découverte de services...");
+                updateStatus("Connected. Discovering services...");
                 
                 const service = await server.getPrimaryService(NUS_SERVICE_UUID);
-                updateStatus("Service trouvé. Découverte de caractéristique...");
+                updateStatus("Service found. Discovering characteristic...");
 
                 rxCharacteristic = await service.getCharacteristic(RX_CHAR_UUID);
-                updateStatus("Abonnement au flux de données...");
+                updateStatus("Subscribing to data stream...");
 
                 await rxCharacteristic.startNotifications();
                 rxCharacteristic.addEventListener('characteristicvaluechanged', handleCharacteristicValueChanged);
 
                 // FINAL SUCCESS STATE
-                updateStatus("CONNECTÉ (LIVE)");
-                connectButton.textContent = "Connecté";
+                updateStatus("CONNECTED (LIVE)");
                 connectButton.classList.add('hidden');
                 disconnectButton.classList.remove('hidden');
                 mockButton.disabled = true;
                 
             } catch (error) {
                 console.error("[BLE] GATT Error:", error);
-                updateStatus(`Erreur GATT: ${error.message}`, true);
+                updateStatus(`GATT Error: ${error.message}`, true);
                 connectButton.disabled = false;
-                connectButton.textContent = "Connecter à ESP32";
+                connectButton.textContent = "Connect to ESP32 (BLE)";
                 connectButton.classList.remove('hidden');
                 disconnectButton.classList.add('hidden');
                 mockButton.disabled = false;
@@ -391,12 +396,12 @@
 
         function onDisconnected() {
             console.log("[BLE] Device disconnected.");
-            updateStatus(`Déconnecté.`, true);
+            updateStatus(`Disconnected.`, true);
             updateGaugeDisplay('--.-'); // Reset display
             
             // UI Reset
             connectButton.disabled = false;
-            connectButton.textContent = "Connecter à ESP32";
+            connectButton.textContent = "Connect to ESP32 (BLE)";
             connectButton.classList.remove('hidden');
             disconnectButton.classList.add('hidden');
             mockButton.disabled = false;
@@ -408,8 +413,9 @@
             mockButton.disabled = false; 
             
             psiValueElement.textContent = '--.-';
-            updateStatus("Prêt à connecter");
+            updateStatus("Ready to Connect");
             
+            // Initial check to hide controls if starting in landscape
             checkOrientationLayout();
         };
 
