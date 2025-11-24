@@ -30,16 +30,17 @@
         .controls {
             padding: 1rem 0;
         }
-        .log-entry {
-            border-bottom: 1px solid #1f2937; /* Gray-800 */
-            padding: 0.5rem 0;
+        /* Ensure the body and html take up full height for the main container to stretch */
+        html, body {
+            height: 100%;
+            margin: 0;
         }
     </style>
 </head>
-<!-- ADDED large padding-bottom (pb-40) to the main container to ensure 
-     the gauge display is pushed above the fixed control area's height. -->
+<!-- Increased padding-bottom (pb-[18rem]) to create maximum clearance for the fixed control bar at the bottom. -->
 <body class="text-white">
-    <div class="flex flex-col min-h-screen p-4 pb-40"> 
+    <!-- h-screen ensures this container takes the full height of the viewport -->
+    <div class="flex flex-col h-screen p-4 pb-[18rem]"> 
         
         <header class="text-center py-6">
             <h1 class="text-2xl font-bold text-blue-400">ESP32 Live Pressure Gauge</h1>
@@ -51,7 +52,7 @@
             </p>
         </header>
 
-        <!-- Main Gauge Display -->
+        <!-- Main Gauge Display: flex-grow ensures it fills available space, keeping it centered -->
         <main class="flex-grow gauge-display">
             <div class="p-8 rounded-xl shadow-2xl bg-gray-800 bg-opacity-50">
                 <span id="psiValue" class="text-9xl md:text-[12rem] font-extrabold tracking-tight text-white transition-all duration-300">
@@ -61,10 +62,8 @@
             </div>
         </main>
 
-        <!-- Controls and Logs -->
-        <!-- This entire section is now positioned after the main content, 
-             and the main container's padding ensures the content above is visible. -->
-        <div class="absolute bottom-0 left-0 right-0 p-4 bg-gray-900 shadow-2xl border-t border-gray-700">
+        <!-- Controls and Logs: Fixed position at the bottom of the viewport -->
+        <div class="fixed bottom-0 left-0 right-0 p-4 bg-gray-900 shadow-2xl border-t border-gray-700 z-10">
             <!-- Bluetooth Connect Button -->
             <button id="connectButton" onclick="requestDeviceAndConnect()"
                     class="w-full py-4 text-xl font-semibold rounded-xl transition-all duration-200 shadow-lg 
@@ -280,6 +279,7 @@
             }
             
             // Note: We use the FIREBASE_CONFIG.projectId as the artifact appId for simplicity when manual setup is used.
+            // PATH: /artifacts/oil-pressure-gauge/users/{USER_ID}/pressure_logs
             const logPath = `/artifacts/${appId}/users/${userId}/${LOG_COLLECTION_NAME}`;
 
             try {
@@ -290,12 +290,13 @@
                     timestamp: Date.now(), 
                     sessionId: currentSessionId, 
                 }).then(() => {
+                    // This block executes ONLY if the write was successful (i.e., Security Rules allowed it)
                     sessionDataPoints++; // Increment count only on successful save
                     if (isLogging) {
                         sessionCountElement.textContent = `Points: ${sessionDataPoints}`;
                     }
                 }).catch(error => {
-                    console.error("CRITICAL ERROR writing document to Firestore:", error); 
+                    console.error("CRITICAL ERROR writing document to Firestore (Check Security Rules!):", error); 
                 });
                 
             } catch (error) {
