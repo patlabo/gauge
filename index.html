@@ -92,7 +92,7 @@
             <h2 class="text-xl font-bold mb-3 text-gray-300">Session Log Status</h2>
             <div id="sessionStatus" class="text-gray-400 text-sm space-y-1">
                 <p id="logStatus" class="text-yellow-500">Initializing database...</p>
-                <p id="sessionCount" class="text-gray-500">Session Count: 0</p>
+                <p id="sessionCount" class="text-gray-500">Data Points: 0</p>
             </div>
             
             <!-- Export Button (Hidden until a session is stopped) -->
@@ -197,6 +197,7 @@
                 
                 logStatusElement.textContent = `Session ${currentSessionId.slice(-4)}: Recording...`;
                 updateStatus("Data LOGGING STARTED", false, true);
+                console.log(`[LOGGING] Session started: ${currentSessionId}`); // NEW DEBUG LOG
 
             } else {
                 // STOP LOGGING
@@ -207,6 +208,7 @@
                 logStatusElement.textContent = `Session ${currentSessionId.slice(-4)} FINISHED. ${sessionDataPoints} points logged.`;
                 exportButton.disabled = false; // Enable export once stopped
                 updateStatus("Data Logging STOPPED. Stream still running.");
+                console.log(`[LOGGING] Session finished. Total points: ${sessionDataPoints}`); // NEW DEBUG LOG
             }
         }
 
@@ -215,7 +217,9 @@
          * @param {number} psiValue - The pressure value (PSI).
          */
         async function logPressureReading(psiValue) {
+            // CRITICAL CHECK: Ensure auth is ready before attempting to save
             if (!isAuthReady || !userId || !currentSessionId) {
+                console.warn("Attempted to log data: Auth or Session ID not ready.");
                 return;
             }
             
@@ -230,9 +234,11 @@
                 
                 sessionDataPoints++; // Increment count
                 sessionCountElement.textContent = `Data Points: ${sessionDataPoints}`;
+                // console.log(`[LOGGING] Point saved: ${psiValue}`); // Optional: Too frequent to log normally
                 
             } catch (error) {
-                console.error("Error writing document to Firestore:", error);
+                console.error("CRITICAL ERROR writing document to Firestore:", error); // NEW DEBUG LOG
+                logStatusElement.textContent = `CRITICAL LOGGING ERROR! Check console.`;
             }
         }
 
@@ -242,6 +248,10 @@
         window.exportSessionLog = async function() {
             if (!currentSessionId) {
                 alert("No session was recorded or the last session was not properly closed.");
+                return;
+            }
+            if (!isAuthReady) {
+                 alert("Database initialization not complete. Please wait.");
                 return;
             }
 
@@ -267,20 +277,25 @@
                     csvContent += `${isoTime},${localTime},${data.psi.toFixed(2)}\n`;
                 });
 
-                // Create a blob and trigger download
-                const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-                const fileName = `PSI_Log_${new Date(Number(exportId)).toISOString().slice(0, 19).replace('T', '_')}.csv`;
-                
-                // Use a temporary link to trigger the download on the mobile device
-                const link = document.createElement('a');
-                link.href = URL.createObjectURL(blob);
-                link.setAttribute('download', fileName);
-                link.style.visibility = 'hidden';
-                document.body.appendChild(link);
-                link.click();
-                document.body.removeChild(link);
+                if (snapshot.docs.length === 0) {
+                     alert("Fetch successful, but 0 points found for this session. The data failed to write during logging.");
+                     exportButton.textContent = "0 Points Fetched!";
+                } else {
+                    // Create a blob and trigger download
+                    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+                    const fileName = `PSI_Log_${new Date(Number(exportId)).toISOString().slice(0, 19).replace('T', '_')}.csv`;
+                    
+                    // Use a temporary link to trigger the download on the mobile device
+                    const link = document.createElement('a');
+                    link.href = URL.createObjectURL(blob);
+                    link.setAttribute('download', fileName);
+                    link.style.visibility = 'hidden';
+                    document.body.appendChild(link);
+                    link.click();
+                    document.body.removeChild(link);
 
-                exportButton.textContent = `Download Successful! (${snapshot.docs.length} points)`;
+                    exportButton.textContent = `Download Successful! (${snapshot.docs.length} points)`;
+                }
                 
             } catch (error) {
                 console.error("CSV Export Error:", error);
