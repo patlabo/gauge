@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Live PSI Gauge (Web Bluetooth)</title>
+    <title>Live PSI Gauge with Session Logging and CSV Export</title>
     <!-- Load Tailwind CSS for modern, responsive styling -->
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
@@ -34,6 +34,10 @@
             padding: 1rem 0;
             background: linear-gradient(to top, #0d1117, transparent);
         }
+        .log-entry {
+            border-bottom: 1px solid #1f2937; /* Gray-800 */
+            padding: 0.5rem 0;
+        }
     </style>
 </head>
 <body class="text-white">
@@ -45,7 +49,7 @@
                 Connection Status: Disconnected
             </p>
             <p class="text-xs mt-1 text-gray-400">
-                Open in Chrome or Edge on iOS for Web Bluetooth support.
+                Open with Bluefy or another Web Bluetooth-enabled browser on iOS.
             </p>
         </header>
 
@@ -74,30 +78,223 @@
                            bg-gray-700 hover:bg-gray-600 active:scale-95">
                 Start Mock Data
             </button>
-
-            <!-- Debug Log -->
-            <div class="mt-4 p-2 bg-gray-900 rounded-lg text-xs max-h-24 overflow-y-auto hidden" id="logContainer">
-                <div class="font-bold text-gray-400 mb-1">Log:</div>
-                <pre id="log" class="text-gray-500 whitespace-pre-wrap"></pre>
+            
+            <!-- NEW: Start/Stop Logging Button -->
+            <button id="startStopLogButton" onclick="toggleLogging()" disabled
+                    class="w-full py-3 text-lg font-medium rounded-xl transition-all duration-200 shadow-lg disabled:opacity-50
+                           bg-orange-500 hover:bg-orange-600 active:scale-95">
+                Start Data Logging
+            </button>
+        </div>
+        
+        <!-- Data Log Status and Export -->
+        <div class="mt-8 p-4 bg-gray-900 rounded-xl">
+            <h2 class="text-xl font-bold mb-3 text-gray-300">Session Log Status</h2>
+            <div id="sessionStatus" class="text-gray-400 text-sm space-y-1">
+                <p id="logStatus" class="text-yellow-500">Initializing database...</p>
+                <p id="sessionCount" class="text-gray-500">Session Count: 0</p>
             </div>
+            
+            <!-- Export Button (Hidden until a session is stopped) -->
+            <button id="exportButton" onclick="exportSessionLog()" disabled
+                    class="w-full mt-4 py-3 text-lg font-medium rounded-xl transition-all duration-200 shadow-lg disabled:opacity-50
+                           bg-green-600 hover:bg-green-700 active:scale-95">
+                Download Log (.csv)
+            </button>
         </div>
     </div>
 
-    <script>
-        // Constants matching the ESP32 setup (Nordic UART Service)
+    <script type="module">
+        // Firebase Imports
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        // Note: query, where, getDocs for export are added below
+        import { getFirestore, collection, addDoc, query, where, getDocs, onSnapshot } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // Global Firebase and App Variables
+        let db;
+        let auth;
+        let userId;
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+        const LOG_COLLECTION_NAME = 'pressure_logs';
+
+        // BLE Constants
         const NUS_SERVICE_UUID = '6e400001-b5a3-f393-e0a9-e50e24dcca9e';
         const RX_CHAR_UUID = '6e400003-b5a3-f393-e0a9-e50e24dcca9e'; 
 
+        // State Variables
         let bleDevice = null;
         let rxCharacteristic = null;
-        let mockDataInterval = null; // New variable for the mock data timer
+        let mockDataInterval = null; 
         let isMockingData = false;
-        let currentMockPsi = 50.0; // Starting PSI for mock data
+        let isLogging = false; 
+        let currentMockPsi = 50.0; 
+        let isAuthReady = false;
+        let currentSessionId = null; // NEW: Unique ID for the current track session
+        let sessionDataPoints = 0; // NEW: Counter for points in the current session
 
+        // UI Elements
         const psiValueElement = document.getElementById('psiValue');
         const statusElement = document.getElementById('status');
         const connectButton = document.getElementById('connectButton');
         const mockButton = document.getElementById('mockButton');
+        const startStopLogButton = document.getElementById('startStopLogButton');
+        const logStatusElement = document.getElementById('logStatus');
+        const sessionCountElement = document.getElementById('sessionCount'); // NEW
+        const exportButton = document.getElementById('exportButton'); // NEW
+
+        /**
+         * Initialize Firebase and perform custom authentication.
+         */
+        async function initializeFirebase() {
+            try {
+                const firebaseConfig = JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : '{}');
+                const app = initializeApp(firebaseConfig);
+                db = getFirestore(app);
+                auth = getAuth(app);
+                
+                logStatusElement.textContent = "Authenticating...";
+
+                if (typeof __initial_auth_token !== 'undefined') {
+                    await signInWithCustomToken(auth, __initial_auth_token);
+                } else {
+                    await signInAnonymously(auth);
+                }
+                
+                userId = auth.currentUser?.uid || crypto.randomUUID();
+                isAuthReady = true;
+                logStatusElement.textContent = `User ID: ${userId.substring(0, 8)}... | Logs Saved: Private`;
+                sessionCountElement.textContent = "Data Points: 0";
+                
+                // We no longer need the real-time listener for the UI since we track the count locally.
+
+            } catch (error) {
+                console.error("Firebase Initialization or Auth Error:", error);
+                logStatusElement.textContent = `Database Error: Failed to connect.`;
+            }
+        }
+
+        /**
+         * Toggles the data logging state on/off.
+         */
+        window.toggleLogging = function() {
+            if (!bleDevice && !isMockingData) {
+                updateStatus("Error: Start a data stream (live or mock) before logging.", true);
+                return;
+            }
+            
+            isLogging = !isLogging;
+            
+            if (isLogging) {
+                // START LOGGING: Create a new session ID
+                currentSessionId = Date.now().toString(); // Use timestamp as a unique ID
+                sessionDataPoints = 0; // Reset counter
+                exportButton.disabled = true;
+                
+                startStopLogButton.textContent = "Stop Data Logging";
+                startStopLogButton.classList.remove('bg-orange-500', 'hover:bg-orange-600');
+                startStopLogButton.classList.add('bg-red-600', 'hover:bg-red-700');
+                
+                logStatusElement.textContent = `Session ${currentSessionId.slice(-4)}: Recording...`;
+                updateStatus("Data LOGGING STARTED", false, true);
+
+            } else {
+                // STOP LOGGING
+                startStopLogButton.textContent = "Start Data Logging";
+                startStopLogButton.classList.remove('bg-red-600', 'hover:bg-red-700');
+                startStopLogButton.classList.add('bg-orange-500', 'hover:bg-orange-600');
+                
+                logStatusElement.textContent = `Session ${currentSessionId.slice(-4)} FINISHED. ${sessionDataPoints} points logged.`;
+                exportButton.disabled = false; // Enable export once stopped
+                updateStatus("Data Logging STOPPED. Stream still running.");
+            }
+        }
+
+        /**
+         * Saves a pressure reading to Firestore.
+         * @param {number} psiValue - The pressure value (PSI).
+         */
+        async function logPressureReading(psiValue) {
+            if (!isAuthReady || !userId || !currentSessionId) {
+                return;
+            }
+            
+            const logPath = `/artifacts/${appId}/users/${userId}/${LOG_COLLECTION_NAME}`;
+
+            try {
+                await addDoc(collection(db, logPath), {
+                    psi: psiValue,
+                    timestamp: Date.now(), // Client (phone's) precise timestamp
+                    sessionId: currentSessionId, // Tag the document with the session ID
+                });
+                
+                sessionDataPoints++; // Increment count
+                sessionCountElement.textContent = `Data Points: ${sessionDataPoints}`;
+                
+            } catch (error) {
+                console.error("Error writing document to Firestore:", error);
+            }
+        }
+
+        /**
+         * Fetches all documents for the last completed session and exports them as CSV.
+         */
+        window.exportSessionLog = async function() {
+            if (!currentSessionId) {
+                alert("No session was recorded or the last session was not properly closed.");
+                return;
+            }
+
+            exportButton.disabled = true;
+            exportButton.textContent = "Fetching Data...";
+            
+            const exportId = currentSessionId;
+            const logPath = `/artifacts/${appId}/users/${userId}/${LOG_COLLECTION_NAME}`;
+            
+            // Query for all documents matching the completed session ID
+            const q = query(collection(db, logPath), where("sessionId", "==", exportId));
+            
+            try {
+                const snapshot = await getDocs(q);
+                let csvContent = "Timestamp (ISO),Time (Local),PSI\n";
+                
+                snapshot.forEach(doc => {
+                    const data = doc.data();
+                    const date = new Date(data.timestamp);
+                    const isoTime = date.toISOString();
+                    const localTime = date.toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit', fractionalSecondDigits: 3 });
+                    
+                    csvContent += `${isoTime},${localTime},${data.psi.toFixed(2)}\n`;
+                });
+
+                // Create a blob and trigger download
+                const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+                const fileName = `PSI_Log_${new Date(Number(exportId)).toISOString().slice(0, 19).replace('T', '_')}.csv`;
+                
+                // Use a temporary link to trigger the download on the mobile device
+                const link = document.createElement('a');
+                link.href = URL.createObjectURL(blob);
+                link.setAttribute('download', fileName);
+                link.style.visibility = 'hidden';
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+
+                exportButton.textContent = `Download Successful! (${snapshot.docs.length} points)`;
+                
+            } catch (error) {
+                console.error("CSV Export Error:", error);
+                exportButton.textContent = "Export Failed!";
+            }
+            
+            // Re-enable the button after a delay
+            setTimeout(() => {
+                if (!isLogging) {
+                    exportButton.disabled = false;
+                    exportButton.textContent = "Download Log (.csv)";
+                }
+            }, 3000);
+        }
 
         /**
          * Utility to update the status text and optionally log messages.
@@ -113,35 +310,43 @@
         }
 
         /**
-         * Simulates receiving data from the ESP32.
-         * Note: The real event handler expects an event, but we simulate the core logic.
+         * Core function to update the display based on received data.
          */
         function updateGaugeDisplay(dataString) {
             const psi = parseFloat(dataString.trim());
             
             if (!isNaN(psi)) {
-                // Update the gauge display
-                psiValueElement.textContent = psi.toFixed(1); // Show one decimal place
+                psiValueElement.textContent = psi.toFixed(1); 
+                
+                // Optional: Change gauge color based on pressure
+                if (psi > 120) {
+                    psiValueElement.classList.remove('text-yellow-400', 'text-white');
+                    psiValueElement.classList.add('text-red-500');
+                } else if (psi > 80) {
+                    psiValueElement.classList.remove('text-red-500', 'text-white');
+                    psiValueElement.classList.add('text-yellow-400');
+                } else {
+                    psiValueElement.classList.remove('text-red-500', 'text-yellow-400');
+                    psiValueElement.classList.add('text-white');
+                }
+                
+                // --- Conditional Logging: Only log if the user has enabled it ---
+                if (isLogging) {
+                    logPressureReading(psi);
+                }
             }
         }
         
-        /**
-         * Handles incoming data from the ESP32 (real Bluetooth).
-         */
+        // --- Bluetooth connection functions and Mock Data functions remain the same ---
         function handleCharacteristicValueChanged(event) {
             const value = event.target.value;
-            // The ESP32 sends the PSI value as a simple string (e.g., "105.4")
             const decoder = new TextDecoder('utf-8');
             const dataString = decoder.decode(value);
             updateGaugeDisplay(dataString);
         }
 
-        /**
-         * Toggles the mock data generation on and off.
-         */
-        function toggleMockData() {
+        window.toggleMockData = function() {
             if (isMockingData) {
-                // STOP MOCKING
                 clearInterval(mockDataInterval);
                 isMockingData = false;
                 mockButton.textContent = "Start Mock Data";
@@ -150,10 +355,11 @@
                 updateGaugeDisplay('--.-');
                 updateStatus("Mock Data Stopped. Ready to connect.");
                 connectButton.disabled = false;
+                startStopLogButton.disabled = true;
+                if (isLogging) toggleLogging();
+
             } else {
-                // START MOCKING
                 if (bleDevice && bleDevice.gatt.connected) {
-                    // Prevent mock data from running while real Bluetooth is active
                     updateStatus("Error: Disconnect real device before running mock data.", true);
                     return;
                 }
@@ -162,23 +368,19 @@
                 mockButton.classList.remove('bg-gray-700', 'hover:bg-gray-600');
                 mockButton.classList.add('bg-red-600', 'hover:bg-red-700');
                 connectButton.disabled = true;
+                startStopLogButton.disabled = false;
                 updateStatus("Mock Data Running (Simulating PSI)", false, true);
 
-                // Start the simulation timer
                 mockDataInterval = setInterval(() => {
-                    // Randomly adjust the PSI value to simulate fluctuation
-                    const delta = (Math.random() * 2) - 1; // Change between -1.0 and +1.0
-                    currentMockPsi = Math.max(0, Math.min(150, currentMockPsi + delta)); // Cap between 0 and 150 PSI
+                    const delta = (Math.random() * 2) - 1;
+                    currentMockPsi = Math.max(0, Math.min(150, currentMockPsi + delta));
                     
                     updateGaugeDisplay(currentMockPsi.toFixed(1));
-                }, 100); // Update every 100ms
+                }, 100);
             }
         }
         
-        /**
-         * Starts the Web Bluetooth connection process.
-         */
-        async function requestDeviceAndConnect() {
+        window.requestDeviceAndConnect = async function() {
             if (isMockingData) {
                 updateStatus("Mock data is running. Please stop it before connecting to Bluetooth.", true);
                 return;
@@ -186,7 +388,7 @@
 
             if (!navigator.bluetooth) {
                 updateStatus("Error: Web Bluetooth not supported in this browser.", true);
-                console.error("Web Bluetooth is not supported in this browser. Please use Google Chrome or Microsoft Edge on iOS.");
+                console.error("Web Bluetooth is not supported in this browser. Please use Bluefy.");
                 return;
             }
 
@@ -194,9 +396,8 @@
                 updateStatus("Requesting device access...");
                 connectButton.disabled = true;
                 connectButton.textContent = "Scanning...";
-                mockButton.disabled = true; // Disable mock while scanning
+                mockButton.disabled = true;
                 
-                // Request the device, filtering by the Nordic UART Service UUID
                 bleDevice = await navigator.bluetooth.requestDevice({
                     filters: [{ services: [NUS_SERVICE_UUID] }],
                 });
@@ -214,9 +415,6 @@
             }
         }
 
-        /**
-         * Connects to the GATT server, discovers services and characteristics.
-         */
         async function connectGATT() {
             try {
                 const server = await bleDevice.gatt.connect();
@@ -234,33 +432,32 @@
                 updateStatus("Subscribed to data stream (LIVE)", false);
                 statusElement.className = 'text-sm mt-1 text-green-500';
                 
-                // Change the button text/functionality
                 connectButton.textContent = "Connected (Live)";
                 connectButton.disabled = true;
-                mockButton.disabled = true; // Disable mock while connected
+                mockButton.disabled = true;
+                startStopLogButton.disabled = false;
 
             } catch (error) {
                 updateStatus(`GATT Error: ${error.message}. Check ESP32 NOTIFY property.`, true);
                 connectButton.disabled = false;
                 connectButton.textContent = "Connect to ESP32 Gauge";
-                mockButton.disabled = false; // Re-enable mock
+                mockButton.disabled = false;
+                startStopLogButton.disabled = true;
                 if (bleDevice && bleDevice.gatt.connected) {
                     bleDevice.gatt.disconnect();
                 }
             }
         }
 
-        /**
-         * Handles device disconnection.
-         */
         function onDisconnected() {
             updateStatus(`Device disconnected. Attempting to reconnect...`, true);
             psiValueElement.textContent = '--.-';
             connectButton.disabled = false;
             connectButton.textContent = "Connect to ESP32 Gauge";
-            mockButton.disabled = false; // Re-enable mock
+            mockButton.disabled = false;
+            startStopLogButton.disabled = true;
+            if (isLogging) toggleLogging();
 
-            // Small delay before attempting to reconnect
             setTimeout(async () => {
                  if (bleDevice) {
                     try {
@@ -273,12 +470,15 @@
                         mockButton.disabled = false;
                     }
                 }
-            }, 2000); // Wait 2 seconds before trying to reconnect
+            }, 2000);
         }
 
-        // Initialize display to show the disconnected state
-        psiValueElement.textContent = '--.-';
-        updateStatus("Ready to connect. Tap the button or start mock data.");
+        // --- Initialization on load ---
+        window.onload = () => {
+            initializeFirebase();
+            psiValueElement.textContent = '--.-';
+            updateStatus("Ready to connect. Tap the button or start mock data.");
+        };
 
     </script>
 </body>
