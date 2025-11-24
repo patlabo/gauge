@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Live PSI Gauge - Last Session ID Display</title>
+    <title>Live PSI Gauge - Final Display Version</title>
     <!-- Load Tailwind CSS for modern, responsive styling -->
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
@@ -29,7 +29,7 @@
         html, body {
             height: 100%;
             margin: 0;
-            overflow-y: auto; /* Allow scrolling for the main view */
+            overflow-y: auto; 
             overflow-x: hidden;
         }
         
@@ -58,9 +58,9 @@
         
         <!-- HEADER CONTAINER (Hidden by default in landscape) -->
         <header id="headerContainer" class="text-center py-2 transition-opacity duration-300 hide-in-landscape">
-            <h1 class="text-xl font-bold text-blue-400">PSI Gauge</h1>
+            <h1 class="text-xl font-bold text-blue-400">PSI Live Gauge</h1>
             <p id="status" class="text-sm mt-1 text-yellow-500">
-                Connection Status: Disconnected
+                Statut: Prêt à connecter
             </p>
         </header>
 
@@ -68,6 +68,7 @@
         <main class="flex-grow gauge-display">
             <div class="p-8 rounded-xl shadow-2xl bg-gray-800 bg-opacity-50 gauge-card">
                 <div class="overflow-x-auto"> 
+                    <!-- PSI Value Display - Large and dynamic -->
                     <span id="psiValue" class="text-9xl md:text-[12rem] font-extrabold tracking-tight text-white transition-all duration-300 whitespace-nowrap">
                         --.-
                     </span>
@@ -78,11 +79,12 @@
 
         <!-- CONTROLS CONTAINER (Hidden by default in landscape) -->
         <div id="controlsContainer" class="p-2 pt-4 bg-gray-900 shadow-2xl border-t border-gray-700 z-10 w-full mx-auto max-w-lg rounded-t-xl transition-opacity duration-300 hide-in-landscape">
+            
             <!-- Bluetooth Connect Button -->
             <button id="connectButton" onclick="requestDeviceAndConnect()"
                     class="w-full py-3 text-lg font-semibold rounded-xl transition-all duration-200 shadow-lg 
                            bg-blue-600 hover:bg-blue-700 active:scale-95">
-                Connect to ESP32
+                Connecter à ESP32
             </button>
             
             <div class="flex space-x-3 mt-3">
@@ -90,69 +92,22 @@
                 <button id="mockButton" onclick="toggleMockData()"
                         class="flex-1 py-2 text-base font-medium rounded-xl transition-all duration-200 shadow-lg 
                             bg-gray-700 hover:bg-gray-600 active:scale-95">
-                    Mock Data
+                    Données Simulé
                 </button>
                 
-                <!-- Start/Stop Logging Button -->
-                <button id="startStopLogButton" onclick="toggleLogging()" disabled
-                        class="flex-1 py-2 text-base font-medium rounded-xl transition-all duration-200 shadow-lg disabled:opacity-50
-                            bg-orange-500 hover:bg-orange-600 active:scale-95">
-                    Start Logging
+                <!-- Disconnect Button (Hidden until connected) -->
+                <button id="disconnectButton" onclick="disconnectDevice()"
+                        class="flex-1 py-2 text-base font-medium rounded-xl transition-all duration-200 shadow-lg 
+                            bg-red-700 hover:bg-red-800 active:scale-95 hidden">
+                    Déconnecter
                 </button>
-            </div>
-
-            
-            <!-- Data Log Status and Export (Simplified) -->
-            <div class="mt-4 p-3 bg-gray-800 rounded-lg">
-                <div id="sessionStatus" class="text-gray-400 text-sm space-y-1 flex flex-col">
-                    <p id="logStatus" class="text-yellow-500 font-semibold">DB Status: Initializing...</p>
-                    <p id="sessionCount" class="text-gray-500">Points: 0</p>
-                </div>
-                
-                <!-- Export/ID Button -->
-                <button id="exportButton" onclick="handleExportClick()" disabled
-                        class="w-full mt-3 py-2 text-md font-medium rounded-xl transition-all duration-200 shadow-lg disabled:opacity-50
-                            bg-green-600 hover:bg-green-700 active:scale-95">
-                    Prepare Export (Click to find last session)
-                </button>
-                <p class="text-xs text-gray-500 mt-2 text-center">Cliquez ici pour récupérer l'ID de la dernière session et exporter.</p>
             </div>
         </div>
         
     </div>
 
-    <script type="module">
-        // Firebase Imports
-        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-        import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import { getFirestore, collection, addDoc, query, where, getDocs, setLogLevel, limit, orderBy } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
-
-        // IMPORTANT: Set Firestore logging level to Debug to see potential errors
-        setLogLevel('debug'); 
-
-        // ----------------------------------------------------------------------
-        // CONFIGURATION FIREBASE PERSONNELLE
-        // Ces valeurs ont été fournies par l'utilisateur à partir de la console Firebase.
-        // ----------------------------------------------------------------------
-        const FIREBASE_CONFIG = {
-            apiKey: "AIzaSyCLqDL58iXAuWSzGYYwixSJoeA2_S4_LjY", 
-            authDomain: "oil-pressure-gauge.firebaseapp.com",
-            projectId: "oil-pressure-gauge", 
-            storageBucket: "oil-pressure-gauge.firebasestorage.app",
-            messagingSenderId: "459188403300",
-            appId: "1:459188403300:web:25fe9f2a6b91ca3e493371"
-        };
-        // ----------------------------------------------------------------------
-
-
-        // Global Firebase and App Variables
-        let db;
-        let auth;
-        let userId;
-        const appId = FIREBASE_CONFIG.projectId || 'manual-gauge-app'; 
-        const LOG_COLLECTION_NAME = 'pressure_logs';
-
-        // BLE Constants
+    <script>
+        // BLE Constants (Nordic UART Service)
         const NUS_SERVICE_UUID = '6e400001-b5a3-f393-e0a9-e50e24dcca9e';
         const RX_CHAR_UUID = '6e400003-b5a3-f393-e0a9-e50e24dcca9e'; 
 
@@ -161,175 +116,23 @@
         let rxCharacteristic = null;
         let mockDataInterval = null; 
         let isMockingData = false;
-        let isLogging = false; 
         let currentMockPsi = 50.0; 
-        let isAuthReady = false; 
-        let currentSessionId = null; 
-        let sessionDataPoints = 0; 
-        let controlsVisible = false; 
-        let lastFoundSessionId = null; // New state to hold the ID we want to export
+        let controlsVisible = true; // Start visible in portrait
 
         // UI Elements
         const psiValueElement = document.getElementById('psiValue');
         const statusElement = document.getElementById('status');
         const connectButton = document.getElementById('connectButton');
         const mockButton = document.getElementById('mockButton');
-        const startStopLogButton = document.getElementById('startStopLogButton');
-        const logStatusElement = document.getElementById('logStatus');
-        const sessionCountElement = document.getElementById('sessionCount'); 
-        const exportButton = document.getElementById('exportButton'); 
+        const disconnectButton = document.getElementById('disconnectButton');
         const headerContainer = document.getElementById('headerContainer');
         const controlsContainer = document.getElementById('controlsContainer');
         
-        // Tailwind color classes to manage
-        const COLOR_CLASSES = ['text-white', 'text-yellow-400', 'text-orange-400', 'text-red-500'];
+        // Tailwind color classes for PSI value
+        const COLOR_CLASSES = ['text-white', 'text-yellow-400', 'text-orange-400', 'text-red-500', 'text-green-500'];
 
-        // --- EXPORT LOGIC ---
-        
-        /**
-         * Determines the action when the export button is clicked.
-         * 1. If no ID is staged, it finds the last session ID and stages it.
-         * 2. If an ID is staged, it performs the export.
-         */
-        window.handleExportClick = async function() {
-            if (!isAuthReady || isLogging) {
-                const msg = isLogging ? "Stop logging first." : "Database not ready.";
-                logStatusElement.textContent = `DB Status: ${msg}`;
-                return;
-            }
+        // --- UI & Orientation Management ---
 
-            if (lastFoundSessionId) {
-                // Step 2: An ID is staged, proceed to download.
-                await exportSessionLog(lastFoundSessionId);
-                // Reset the export state after download attempt
-                lastFoundSessionId = null;
-                exportButton.textContent = "Prepare Export (Click to find last session)";
-                exportButton.classList.remove('bg-yellow-600', 'hover:bg-yellow-700');
-                exportButton.classList.add('bg-green-600', 'hover:bg-green-700');
-
-            } else {
-                // Step 1: Find the latest session ID and stage it.
-                await findLastSessionId();
-            }
-        }
-
-
-        /**
-         * Finds the ID of the last recorded session.
-         */
-        async function findLastSessionId() {
-            exportButton.disabled = true;
-            exportButton.textContent = "Finding last session ID...";
-            
-            try {
-                const logPath = getLogCollectionPath();
-                
-                // Query Firestore: Order by sessionId (timestamp) descending, limit 1
-                const latestSessionQuery = query(
-                    collection(db, logPath), 
-                    orderBy("sessionId", "desc"),
-                    limit(1)
-                );
-
-                const snapshot = await getDocs(latestSessionQuery);
-
-                if (snapshot.empty) {
-                    logStatusElement.textContent = "DB Status: No sessions recorded yet.";
-                    exportButton.textContent = "No Sessions Found";
-                    lastFoundSessionId = null;
-                } else {
-                    const latestId = snapshot.docs[0].data().sessionId;
-                    lastFoundSessionId = latestId;
-                    
-                    const sessionDateString = new Date(Number(latestId)).toLocaleTimeString('en-US', { hour12: false, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
-                    
-                    logStatusElement.textContent = `DB Status: Last session found: ${sessionDateString}`;
-                    
-                    // Change button appearance to prompt the second click
-                    exportButton.classList.remove('bg-green-600', 'hover:bg-green-700');
-                    exportButton.classList.add('bg-yellow-600', 'hover:bg-yellow-700');
-                    exportButton.textContent = `CONFIRM DOWNLOAD: Session ID ${latestId.substring(4)}`; // Use substring to shorten display
-
-                }
-
-            } catch (error) {
-                console.error("Error finding last session:", error);
-                logStatusElement.textContent = "DB Status: Export Failed (Error in query).";
-                lastFoundSessionId = null;
-            }
-            
-            exportButton.disabled = false;
-        }
-
-
-        /**
-         * Fetches all documents for the specified session ID and exports them as CSV.
-         */
-        async function exportSessionLog(sessionIdToExport) {
-            
-            exportButton.disabled = true;
-            exportButton.textContent = `Fetching data for session ${sessionIdToExport.substring(4)}...`;
-
-            const logPath = getLogCollectionPath();
-            // Query for the exact session ID, ordered by timestamp
-            const q = query(collection(db, logPath), 
-                            where("sessionId", "==", sessionIdToExport),
-                            orderBy("timestamp", "asc") 
-                        );
-            
-            try {
-                const snapshot = await getDocs(q);
-                let csvContent = "Timestamp (ISO),Time (Local),PSI\n";
-                let downloadedCount = 0;
-                
-                snapshot.forEach(doc => {
-                    const data = doc.data();
-                    const date = new Date(data.timestamp);
-                    const isoTime = date.toISOString();
-                    const localTime = date.toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit', fractionalSecondDigits: 3 });
-                    
-                    csvContent += `${isoTime},${localTime},${data.psi.toFixed(2)}\n`;
-                    downloadedCount++;
-                });
-
-                if (downloadedCount === 0) {
-                     logStatusElement.textContent = `DB Status: No data found for session ${sessionIdToExport}.`;
-                } else {
-                    // Trigger the download 
-                    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-                    const sessionDateString = new Date(Number(sessionIdToExport)).toISOString().slice(0, 19).replace('T', '_').replace(/:/g, '-');
-                    const fileName = `PSI_Log_Session_${sessionDateString}.csv`;
-                    
-                    const link = document.createElement('a');
-                    link.href = URL.createObjectURL(blob);
-                    link.setAttribute('download', fileName);
-                    link.style.visibility = 'hidden';
-                    document.body.appendChild(link);
-                    link.click();
-                    document.body.removeChild(link);
-                    
-                    logStatusElement.textContent = `DB Status: Downloaded ${downloadedCount} points from session ${sessionDateString}.`;
-                }
-                
-            } catch (error) {
-                console.error("CSV Export Error:", error);
-                logStatusElement.textContent = "DB Status: Export Failed!";
-            }
-            
-            exportButton.disabled = false;
-        }
-
-        // --- Core App Logic (Unchanged) ---
-        
-        /**
-         * Helper function to get the base path for user-specific logs.
-         * @returns {string} The Firestore collection path.
-         */
-        function getLogCollectionPath() {
-            // Path: /artifacts/{appId}/users/{userId}/pressure_logs
-            return `/artifacts/${appId}/users/${userId}/${LOG_COLLECTION_NAME}`;
-        }
-        
         /**
          * Checks if the device is currently in landscape orientation.
          */
@@ -345,6 +148,7 @@
                 return;
             }
 
+            // Don't hide if clicking on controls or header itself
             if (controlsContainer.contains(event.target) || headerContainer.contains(event.target)) {
                 return;
             }
@@ -369,7 +173,7 @@
         }
         
         /**
-         * Re-applies the default landscape hiding logic if the orientation changes back 
+         * Re-applies the default landscape hiding logic if the orientation changes or on load.
          */
         function checkOrientationLayout() {
             const elements = [headerContainer, controlsContainer];
@@ -377,6 +181,7 @@
             const hideClass = 'hide-in-landscape';
             
             if (isLandscape()) {
+                // In landscape, hide by default unless controlsVisible is true
                 if (!controlsVisible) {
                     elements.forEach(el => {
                         el.classList.remove(showClass);
@@ -384,6 +189,7 @@
                     });
                 }
             } else {
+                // In portrait, ensure visibility
                 controlsVisible = true;
                  elements.forEach(el => {
                     el.classList.remove(hideClass);
@@ -396,157 +202,14 @@
         document.body.addEventListener('click', toggleControlsOnTap);
 
 
-        /**
-         * Initialize Firebase and perform custom authentication.
-         */
-        async function initializeFirebase() {
-            logStatusElement.textContent = "DB Status: Connecting...";
-
-            try {
-                if (!FIREBASE_CONFIG.apiKey || !FIREBASE_CONFIG.projectId) {
-                    throw new Error("Missing Firebase Credentials. Please update FIREBASE_CONFIG in the script.");
-                }
-
-                const app = initializeApp(FIREBASE_CONFIG);
-                db = getFirestore(app);
-                auth = getAuth(app);
-                
-                await signInAnonymously(auth);
-                
-                userId = auth.currentUser?.uid || crypto.randomUUID();
-                isAuthReady = true;
-                
-                logStatusElement.textContent = `DB Status: Ready (User ${userId.substring(0, 4)}...)`;
-                logStatusElement.classList.remove('text-red-500', 'text-yellow-500');
-                logStatusElement.classList.add('text-green-500');
-
-                // Enable the export button once DB is ready
-                exportButton.disabled = false;
-                
-                if (bleDevice || isMockingData) {
-                    startStopLogButton.disabled = false;
-                }
-
-            } catch (error) {
-                console.error("Firebase Initialization or Auth Error:", error);
-                
-                let displayError = "DB Status: ERROR";
-                if (error.message.includes("Missing Firebase Credentials")) {
-                    displayError = "DB Status: CRITICAL CONFIG ERROR";
-                }
-
-                connectButton.disabled = false;
-                mockButton.disabled = false;
-                
-                logStatusElement.textContent = displayError;
-                logStatusElement.classList.remove('text-green-500');
-                logStatusElement.classList.add('text-red-500');
-
-                isAuthReady = false;
-                startStopLogButton.disabled = true;
-                exportButton.disabled = true;
-            }
-        }
-
-        /**
-         * Toggles the data logging state on/off.
-         */
-        window.toggleLogging = function() {
-            if (!isAuthReady) {
-                logStatusElement.textContent = "DB Status: Not Ready";
-                return;
-            }
-
-            if (!bleDevice && !isMockingData) {
-                updateStatus("Error: Start data stream first.", true);
-                return;
-            }
-            
-            isLogging = !isLogging;
-            
-            if (isLogging) {
-                // START LOGGING: Create a new session ID (the current timestamp)
-                currentSessionId = Date.now().toString(); 
-                sessionDataPoints = 0; 
-                lastFoundSessionId = null; // Clear staged ID when starting new session
-                
-                startStopLogButton.textContent = "Stop Logging";
-                startStopLogButton.classList.remove('bg-orange-500', 'hover:bg-orange-600');
-                startStopLogButton.classList.add('bg-red-600', 'hover:bg-red-700');
-                
-                logStatusElement.textContent = `DB Status: Recording...`;
-                logStatusElement.classList.remove('text-green-500', 'text-red-500', 'text-yellow-500');
-                logStatusElement.classList.add('text-blue-400'); // Blue for active recording
-                
-                exportButton.textContent = "Prepare Export (Click to find last session)";
-                exportButton.classList.remove('bg-yellow-600', 'hover:bg-yellow-700');
-                exportButton.classList.add('bg-green-600', 'hover:bg-green-700');
-
-                updateStatus("LIVE - Recording");
-                console.log(`[LOGGING] Session started: ${currentSessionId}`); 
-
-            } else {
-                // STOP LOGGING
-                startStopLogButton.textContent = "Start Logging";
-                startStopLogButton.classList.remove('bg-red-600', 'hover:bg-red-700');
-                startStopLogButton.classList.add('bg-orange-500', 'hover:bg-orange-600');
-                
-                // Keep the ID for export: it is now the last session ID
-                // currentSessionId remains set to the ID of the session just completed
-                
-                logStatusElement.textContent = `DB Status: Logged ${sessionDataPoints} points (ID: ${currentSessionId.substring(4)}...).`;
-                logStatusElement.classList.remove('text-blue-400', 'text-red-500');
-                logStatusElement.classList.add('text-green-500');
-
-                sessionCountElement.textContent = `Points: ${sessionDataPoints} logged`;
-
-                updateStatus("LIVE - Stopped Logging");
-                console.log(`[LOGGING] Session finished. Total points: ${sessionDataPoints}`); 
-                
-                // Automatically stage the just-finished session ID for export
-                lastFoundSessionId = currentSessionId; 
-                const sessionDateString = new Date(Number(currentSessionId)).toLocaleTimeString('en-US', { hour12: false, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
-                exportButton.classList.remove('bg-green-600', 'hover:bg-green-700');
-                exportButton.classList.add('bg-yellow-600', 'hover:bg-yellow-700');
-                exportButton.textContent = `DOWNLOAD: Session ${sessionDateString} (Click to confirm)`;
-            }
-        }
-
-        /**
-         * Saves a pressure reading to Firestore.
-         */
-        async function logPressureReading(psiValue) {
-            if (!isAuthReady || !userId || !currentSessionId) {
-                return;
-            }
-            
-            const logPath = getLogCollectionPath();
-
-            try {
-                addDoc(collection(db, logPath), {
-                    psi: psiValue,
-                    timestamp: Date.now(), 
-                    sessionId: currentSessionId, 
-                }).then(() => {
-                    sessionDataPoints++; 
-                    if (isLogging) {
-                        sessionCountElement.textContent = `Points: ${sessionDataPoints}`;
-                    }
-                }).catch(error => {
-                    console.error("CRITICAL ERROR writing document to Firestore (Check Security Rules!):", error); 
-                });
-                
-            } catch (error) {
-                console.error("Synchronous logPressureReading Error:", error);
-            }
-        }
+        // --- Data & Display Logic ---
 
         /**
          * Utility to update the status text and optionally log messages.
          */
         function updateStatus(text, isError = false, isMock = false) {
             console.log(text);
-            statusElement.textContent = `Connection Status: ${text}`;
+            statusElement.textContent = `Statut: ${text}`;
             if (isMock) {
                 statusElement.className = 'text-sm mt-1 text-purple-400';
             } else {
@@ -555,86 +218,115 @@
         }
 
         /**
-         * Core function to update the display based on received data.
+         * Core function to update the gauge display based on received data.
          */
         function updateGaugeDisplay(dataString) {
             const psi = parseFloat(dataString.trim());
             
             if (!isNaN(psi)) {
+                // Update value
                 psiValueElement.textContent = psi.toFixed(1); 
                 
                 // 1. Remove all color classes first
                 psiValueElement.classList.remove(...COLOR_CLASSES);
                 
-                // 2. Apply color based on new thresholds
-                if (psi <= 10) {
+                // 2. Apply color based on new thresholds (example thresholds)
+                if (psi < 20.0) {
+                    // Critical low pressure (e.g., system failure)
                     psiValueElement.classList.add('text-red-500');
-                } else if (psi <= 30) {
+                } else if (psi >= 20.0 && psi < 45.0) {
+                    // Low pressure warning
                     psiValueElement.classList.add('text-orange-400');
-                } else if (psi <= 40) {
+                } else if (psi >= 45.0 && psi <= 65.0) {
+                    // Nominal operating range
+                    psiValueElement.classList.add('text-green-500');
+                } else if (psi > 65.0 && psi <= 80.0) {
+                    // High pressure warning
                     psiValueElement.classList.add('text-yellow-400');
                 } else {
-                    psiValueElement.classList.add('text-white');
+                    // Critical high pressure
+                    psiValueElement.classList.add('text-red-500');
                 }
-                
-                if (isLogging) {
-                    logPressureReading(psi);
-                }
+
+            } else {
+                // Display when data is invalid or connection is lost
+                psiValueElement.textContent = '--.-';
+                psiValueElement.classList.remove(...COLOR_CLASSES);
+                psiValueElement.classList.add('text-white');
             }
         }
         
+        /**
+         * Handler for data received from BLE characteristic.
+         */
         function handleCharacteristicValueChanged(event) {
             const value = event.target.value;
             const decoder = new TextDecoder('utf-8');
             const dataString = decoder.decode(value);
             updateGaugeDisplay(dataString);
         }
+        
+        // --- Mock Data Functionality ---
 
         window.toggleMockData = function() {
             if (isMockingData) {
+                // STOP MOCKING
                 clearInterval(mockDataInterval);
                 isMockingData = false;
-                mockButton.textContent = "Mock Data";
+                mockButton.textContent = "Données Simulé";
                 mockButton.classList.remove('bg-red-600', 'hover:bg-red-700');
                 mockButton.classList.add('bg-gray-700', 'hover:bg-gray-600');
+                
                 updateGaugeDisplay('--.-');
-                updateStatus("Disconnected");
+                updateStatus("Prêt à connecter");
+                
                 connectButton.disabled = false;
-                startStopLogButton.disabled = true;
-                if (isLogging) toggleLogging();
-
+                disconnectButton.classList.add('hidden');
+                
             } else {
+                // START MOCKING
                 if (bleDevice && bleDevice.gatt.connected) {
-                    updateStatus("Error: Disconnect real device first.", true);
+                    updateStatus("Erreur: Déconnectez l'appareil réel d'abord.", true);
                     return;
                 }
                 isMockingData = true;
-                mockButton.textContent = "Stop Mocking";
+                mockButton.textContent = "Arrêter Simulé";
                 mockButton.classList.remove('bg-gray-700', 'hover:bg-gray-600');
                 mockButton.classList.add('bg-red-600', 'hover:bg-red-700');
+                
                 connectButton.disabled = true;
+                disconnectButton.classList.add('hidden');
                 
-                startStopLogButton.disabled = !isAuthReady;
-                
-                updateStatus("MOCK Data Running", false, true);
+                updateStatus("Données SIMULÉES en cours", false, true);
 
                 mockDataInterval = setInterval(() => {
-                    const delta = (Math.random() * 2) - 1;
-                    currentMockPsi = Math.max(0, Math.min(150, currentMockPsi + delta));
+                    // Simulate random pressure changes around 55 PSI (nominal range)
+                    const delta = (Math.random() * 2) - 1; 
+                    currentMockPsi = Math.max(0, Math.min(100, currentMockPsi + delta));
                     
                     updateGaugeDisplay(currentMockPsi.toFixed(1));
                 }, 100);
             }
         }
+
+        // --- Bluetooth Logic ---
         
+        window.disconnectDevice = function() {
+            if (bleDevice && bleDevice.gatt.connected) {
+                console.log("[BLE] Disconnecting...");
+                bleDevice.gatt.disconnect();
+            }
+            // onDisconnected will handle the UI reset
+        }
+
         window.requestDeviceAndConnect = async function() {
             if (isMockingData) {
-                updateStatus("Error: Stop mock data first.", true);
+                updateStatus("Erreur: Arrêtez les données simulées d'abord.", true);
                 return;
             }
 
             if (!navigator.bluetooth) {
-                updateStatus("Error: Web Bluetooth not supported.", true);
+                updateStatus("Erreur: Web Bluetooth non supporté.", true);
                 return;
             }
 
@@ -650,13 +342,14 @@
                 
                 bleDevice.addEventListener('gattserverdisconnected', onDisconnected);
                 
-                updateStatus(`Connecting to ${bleDevice.name}...`);
+                updateStatus(`Connexion à ${bleDevice.name}...`);
                 await connectGATT();
 
             } catch (error) {
-                updateStatus(`Connection Error`, true);
+                console.error("[BLE] Request/Connection Error:", error);
+                updateStatus(`Erreur de connexion`, true);
                 connectButton.disabled = false;
-                connectButton.textContent = "Connect to ESP32";
+                connectButton.textContent = "Connecter à ESP32";
                 mockButton.disabled = false;
             }
         }
@@ -664,32 +357,32 @@
         async function connectGATT() {
             try {
                 const server = await bleDevice.gatt.connect();
-                updateStatus("Connected. Discovering services...");
+                updateStatus("Connecté. Découverte de services...");
                 
                 const service = await server.getPrimaryService(NUS_SERVICE_UUID);
-                updateStatus("Service found. Discovering characteristic...");
+                updateStatus("Service trouvé. Découverte de caractéristique...");
 
                 rxCharacteristic = await service.getCharacteristic(RX_CHAR_UUID);
-                updateStatus("Subscribing to data stream...");
+                updateStatus("Abonnement au flux de données...");
 
                 await rxCharacteristic.startNotifications();
                 rxCharacteristic.addEventListener('characteristicvaluechanged', handleCharacteristicValueChanged);
 
-                updateStatus("CONNECTED (LIVE)");
-                statusElement.className = 'text-sm mt-1 text-green-500';
-                
-                connectButton.textContent = "CONNECTED";
-                connectButton.disabled = true;
+                // FINAL SUCCESS STATE
+                updateStatus("CONNECTÉ (LIVE)");
+                connectButton.textContent = "Connecté";
+                connectButton.classList.add('hidden');
+                disconnectButton.classList.remove('hidden');
                 mockButton.disabled = true;
-
-                startStopLogButton.disabled = !isAuthReady;
-
+                
             } catch (error) {
-                updateStatus(`GATT Error: ${error.message}`, true);
+                console.error("[BLE] GATT Error:", error);
+                updateStatus(`Erreur GATT: ${error.message}`, true);
                 connectButton.disabled = false;
-                connectButton.textContent = "Connect to ESP32";
+                connectButton.textContent = "Connecter à ESP32";
+                connectButton.classList.remove('hidden');
+                disconnectButton.classList.add('hidden');
                 mockButton.disabled = false;
-                startStopLogButton.disabled = true;
                 if (bleDevice && bleDevice.gatt.connected) {
                     bleDevice.gatt.disconnect();
                 }
@@ -697,37 +390,25 @@
         }
 
         function onDisconnected() {
-            updateStatus(`Disconnected. Reconnecting...`, true);
-            psiValueElement.textContent = '--.-';
+            console.log("[BLE] Device disconnected.");
+            updateStatus(`Déconnecté.`, true);
+            updateGaugeDisplay('--.-'); // Reset display
+            
+            // UI Reset
             connectButton.disabled = false;
-            connectButton.textContent = "Connect to ESP32";
+            connectButton.textContent = "Connecter à ESP32";
+            connectButton.classList.remove('hidden');
+            disconnectButton.classList.add('hidden');
             mockButton.disabled = false;
-            startStopLogButton.disabled = true;
-            if (isLogging) toggleLogging();
-
-            setTimeout(async () => {
-                 if (bleDevice) {
-                    try {
-                        updateStatus("Reconnecting...");
-                        await connectGATT();
-                    } catch (error) {
-                        updateStatus(`Disconnected`, true);
-                        connectButton.disabled = false;
-                        connectButton.textContent = "Connect to ESP32";
-                        mockButton.disabled = false;
-                    }
-                }
-            }, 2000);
         }
 
         // --- Initialization on load ---
         window.onload = () => {
-            initializeFirebase();
             connectButton.disabled = false;
             mockButton.disabled = false; 
             
             psiValueElement.textContent = '--.-';
-            updateStatus("Ready to connect");
+            updateStatus("Prêt à connecter");
             
             checkOrientationLayout();
         };
