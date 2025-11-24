@@ -27,12 +27,11 @@
             color: #6b7280; /* Gray-500 */
             margin-top: -1.5rem; /* Pull unit closer to the number */
         }
-        /* Mobile optimization: make the button area sticky for easy access */
+        /* FIX: Removed sticky position from controls.
+           Instead, the main container now has a large bottom padding (pb-40) 
+           to reserve space, preventing overlap when scrolling or zooming. */
         .controls {
-            position: sticky;
-            bottom: 0;
             padding: 1rem 0;
-            background: linear-gradient(to top, #0d1117, transparent);
         }
         .log-entry {
             border-bottom: 1px solid #1f2937; /* Gray-800 */
@@ -40,8 +39,10 @@
         }
     </style>
 </head>
+<!-- ADDED large padding-bottom (pb-40) to the main container to ensure 
+     the gauge display is pushed above the fixed control area's height. -->
 <body class="text-white">
-    <div class="flex flex-col min-h-screen p-4">
+    <div class="flex flex-col min-h-screen p-4 pb-40"> 
         
         <header class="text-center py-6">
             <h1 class="text-2xl font-bold text-blue-400">ESP32 Live Pressure Gauge</h1>
@@ -64,7 +65,9 @@
         </main>
 
         <!-- Controls and Logs -->
-        <div class="controls flex flex-col space-y-3">
+        <!-- This entire section is now positioned after the main content, 
+             and the main container's padding ensures the content above is visible. -->
+        <div class="absolute bottom-0 left-0 right-0 p-4 bg-gray-900 shadow-2xl border-t border-gray-700">
             <!-- Bluetooth Connect Button -->
             <button id="connectButton" onclick="requestDeviceAndConnect()"
                     class="w-full py-4 text-xl font-semibold rounded-xl transition-all duration-200 shadow-lg 
@@ -72,44 +75,48 @@
                 Connect to ESP32 Gauge
             </button>
             
-            <!-- Mock Data Button -->
-            <button id="mockButton" onclick="toggleMockData()"
-                    class="w-full py-3 text-lg font-medium rounded-xl transition-all duration-200 shadow-lg 
-                           bg-gray-700 hover:bg-gray-600 active:scale-95">
-                Start Mock Data
-            </button>
-            
-            <!-- NEW: Start/Stop Logging Button -->
-            <button id="startStopLogButton" onclick="toggleLogging()" disabled
-                    class="w-full py-3 text-lg font-medium rounded-xl transition-all duration-200 shadow-lg disabled:opacity-50
-                           bg-orange-500 hover:bg-orange-600 active:scale-95">
-                Start Data Logging
-            </button>
-        </div>
-        
-        <!-- Data Log Status and Export -->
-        <div class="mt-8 p-4 bg-gray-900 rounded-xl">
-            <h2 class="text-xl font-bold mb-3 text-gray-300">Session Log Status</h2>
-            <div id="sessionStatus" class="text-gray-400 text-sm space-y-1">
-                <p id="logStatus" class="text-yellow-500">Initializing database...</p>
-                <p id="sessionCount" class="text-gray-500">Data Points: 0</p>
+            <div class="flex space-x-3 mt-3">
+                 <!-- Mock Data Button -->
+                <button id="mockButton" onclick="toggleMockData()"
+                        class="flex-1 py-3 text-lg font-medium rounded-xl transition-all duration-200 shadow-lg 
+                            bg-gray-700 hover:bg-gray-600 active:scale-95">
+                    Mock Data
+                </button>
+                
+                <!-- NEW: Start/Stop Logging Button -->
+                <button id="startStopLogButton" onclick="toggleLogging()" disabled
+                        class="flex-1 py-3 text-lg font-medium rounded-xl transition-all duration-200 shadow-lg disabled:opacity-50
+                            bg-orange-500 hover:bg-orange-600 active:scale-95">
+                    Start Logging
+                </button>
             </div>
+
             
-            <!-- Export Button (Hidden until a session is stopped) -->
-            <button id="exportButton" onclick="exportSessionLog()" disabled
-                    class="w-full mt-4 py-3 text-lg font-medium rounded-xl transition-all duration-200 shadow-lg disabled:opacity-50
-                           bg-green-600 hover:bg-green-700 active:scale-95">
-                Download Log (.csv)
-            </button>
+            <!-- Data Log Status and Export -->
+            <div class="mt-4 p-3 bg-gray-800 rounded-lg">
+                <div id="sessionStatus" class="text-gray-400 text-sm space-y-1 flex justify-between items-center">
+                    <p id="logStatus" class="text-yellow-500">Initializing database...</p>
+                    <p id="sessionCount" class="text-gray-500">Points: 0</p>
+                </div>
+                
+                <!-- Export Button (Hidden until a session is stopped) -->
+                <button id="exportButton" onclick="exportSessionLog()" disabled
+                        class="w-full mt-3 py-2 text-md font-medium rounded-xl transition-all duration-200 shadow-lg disabled:opacity-50
+                            bg-green-600 hover:bg-green-700 active:scale-95">
+                    Download Log (.csv)
+                </button>
+            </div>
         </div>
     </div>
 
     <script type="module">
         // Firebase Imports
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        // Note: query, where, getDocs for export are added below
-        import { getFirestore, collection, addDoc, query, where, getDocs, onSnapshot } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, collection, addDoc, query, where, getDocs, setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // IMPORTANT: Set Firestore logging level to Debug to see potential errors
+        setLogLevel('debug'); 
 
         // Global Firebase and App Variables
         let db;
@@ -129,9 +136,9 @@
         let isMockingData = false;
         let isLogging = false; 
         let currentMockPsi = 50.0; 
-        let isAuthReady = false;
-        let currentSessionId = null; // NEW: Unique ID for the current track session
-        let sessionDataPoints = 0; // NEW: Counter for points in the current session
+        let isAuthReady = false; // Auth flag is critical
+        let currentSessionId = null; 
+        let sessionDataPoints = 0; 
 
         // UI Elements
         const psiValueElement = document.getElementById('psiValue');
@@ -140,37 +147,44 @@
         const mockButton = document.getElementById('mockButton');
         const startStopLogButton = document.getElementById('startStopLogButton');
         const logStatusElement = document.getElementById('logStatus');
-        const sessionCountElement = document.getElementById('sessionCount'); // NEW
-        const exportButton = document.getElementById('exportButton'); // NEW
+        const sessionCountElement = document.getElementById('sessionCount'); 
+        const exportButton = document.getElementById('exportButton'); 
 
         /**
          * Initialize Firebase and perform custom authentication.
          */
         async function initializeFirebase() {
+            logStatusElement.textContent = "Connecting to database...";
+
             try {
                 const firebaseConfig = JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : '{}');
                 const app = initializeApp(firebaseConfig);
                 db = getFirestore(app);
                 auth = getAuth(app);
                 
-                logStatusElement.textContent = "Authenticating...";
-
+                // AUTHENTICATION
                 if (typeof __initial_auth_token !== 'undefined') {
                     await signInWithCustomToken(auth, __initial_auth_token);
                 } else {
                     await signInAnonymously(auth);
                 }
                 
+                // Once authenticated, set user ID and ready flag
                 userId = auth.currentUser?.uid || crypto.randomUUID();
                 isAuthReady = true;
-                logStatusElement.textContent = `User ID: ${userId.substring(0, 8)}... | Logs Saved: Private`;
-                sessionCountElement.textContent = "Data Points: 0";
                 
-                // We no longer need the real-time listener for the UI since we track the count locally.
+                logStatusElement.textContent = `DB Ready. User ID: ${userId.substring(0, 8)}...`;
+                sessionCountElement.textContent = "Points: 0";
+                
+                // If a stream is active (mock or BLE), enable the logging button
+                if (bleDevice || isMockingData) {
+                    startStopLogButton.disabled = false;
+                }
 
             } catch (error) {
                 console.error("Firebase Initialization or Auth Error:", error);
-                logStatusElement.textContent = `Database Error: Failed to connect.`;
+                logStatusElement.textContent = `Database Error: Failed to connect (${error.message.substring(0, 30)}...).`;
+                isAuthReady = false;
             }
         }
 
@@ -178,6 +192,11 @@
          * Toggles the data logging state on/off.
          */
         window.toggleLogging = function() {
+            if (!isAuthReady) {
+                alert("Database is not ready. Please wait for DB Ready status.");
+                return;
+            }
+
             if (!bleDevice && !isMockingData) {
                 updateStatus("Error: Start a data stream (live or mock) before logging.", true);
                 return;
@@ -187,28 +206,30 @@
             
             if (isLogging) {
                 // START LOGGING: Create a new session ID
-                currentSessionId = Date.now().toString(); // Use timestamp as a unique ID
-                sessionDataPoints = 0; // Reset counter
+                currentSessionId = Date.now().toString(); 
+                sessionDataPoints = 0; 
                 exportButton.disabled = true;
                 
-                startStopLogButton.textContent = "Stop Data Logging";
+                startStopLogButton.textContent = "Stop Logging";
                 startStopLogButton.classList.remove('bg-orange-500', 'hover:bg-orange-600');
                 startStopLogButton.classList.add('bg-red-600', 'hover:bg-red-700');
                 
-                logStatusElement.textContent = `Session ${currentSessionId.slice(-4)}: Recording...`;
+                logStatusElement.textContent = `Recording Session ${currentSessionId.slice(-4)}...`;
                 updateStatus("Data LOGGING STARTED", false, true);
-                console.log(`[LOGGING] Session started: ${currentSessionId}`); // NEW DEBUG LOG
+                console.log(`[LOGGING] Session started: ${currentSessionId}`); 
 
             } else {
                 // STOP LOGGING
-                startStopLogButton.textContent = "Start Data Logging";
+                startStopLogButton.textContent = "Start Logging";
                 startStopLogButton.classList.remove('bg-red-600', 'hover:bg-red-700');
                 startStopLogButton.classList.add('bg-orange-500', 'hover:bg-orange-600');
                 
-                logStatusElement.textContent = `Session ${currentSessionId.slice(-4)} FINISHED. ${sessionDataPoints} points logged.`;
-                exportButton.disabled = false; // Enable export once stopped
+                logStatusElement.textContent = `Session ${currentSessionId.slice(-4)} FINISHED.`;
+                sessionCountElement.textContent = `Points: ${sessionDataPoints} logged`;
+
+                exportButton.disabled = (sessionDataPoints === 0); // Only enable export if points were logged
                 updateStatus("Data Logging STOPPED. Stream still running.");
-                console.log(`[LOGGING] Session finished. Total points: ${sessionDataPoints}`); // NEW DEBUG LOG
+                console.log(`[LOGGING] Session finished. Total points: ${sessionDataPoints}`); 
             }
         }
 
@@ -219,26 +240,32 @@
         async function logPressureReading(psiValue) {
             // CRITICAL CHECK: Ensure auth is ready before attempting to save
             if (!isAuthReady || !userId || !currentSessionId) {
-                console.warn("Attempted to log data: Auth or Session ID not ready.");
+                console.warn("Attempted to log data: Auth or Session ID not ready. Dropping point.");
                 return;
             }
             
             const logPath = `/artifacts/${appId}/users/${userId}/${LOG_COLLECTION_NAME}`;
 
             try {
-                await addDoc(collection(db, logPath), {
+                // We do NOT await this addDoc to prevent blocking the main thread 
+                // and preserve high log rate. We use .then() for count update.
+                addDoc(collection(db, logPath), {
                     psi: psiValue,
-                    timestamp: Date.now(), // Client (phone's) precise timestamp
-                    sessionId: currentSessionId, // Tag the document with the session ID
+                    timestamp: Date.now(), 
+                    sessionId: currentSessionId, 
+                }).then(() => {
+                    sessionDataPoints++; // Increment count only on successful save
+                    if (isLogging) {
+                        sessionCountElement.textContent = `Points: ${sessionDataPoints}`;
+                    }
+                }).catch(error => {
+                    console.error("CRITICAL ERROR writing document to Firestore:", error); 
+                    logStatusElement.textContent = `CRITICAL LOGGING ERROR! Check console.`;
                 });
                 
-                sessionDataPoints++; // Increment count
-                sessionCountElement.textContent = `Data Points: ${sessionDataPoints}`;
-                // console.log(`[LOGGING] Point saved: ${psiValue}`); // Optional: Too frequent to log normally
-                
             } catch (error) {
-                console.error("CRITICAL ERROR writing document to Firestore:", error); // NEW DEBUG LOG
-                logStatusElement.textContent = `CRITICAL LOGGING ERROR! Check console.`;
+                // This catch block handles synchronous errors only (e.g., if db or logPath are invalid)
+                console.error("Synchronous logPressureReading Error:", error);
             }
         }
 
@@ -251,7 +278,7 @@
                 return;
             }
             if (!isAuthReady) {
-                 alert("Database initialization not complete. Please wait.");
+                 alert("Database initialization not complete. Please wait for DB Ready status.");
                 return;
             }
 
@@ -278,7 +305,8 @@
                 });
 
                 if (snapshot.docs.length === 0) {
-                     alert("Fetch successful, but 0 points found for this session. The data failed to write during logging.");
+                     // Use a custom modal instead of alert
+                     console.error("Fetch successful, but 0 points found for this session. The data failed to write during logging.");
                      exportButton.textContent = "0 Points Fetched!";
                 } else {
                     // Create a blob and trigger download
@@ -364,7 +392,7 @@
             if (isMockingData) {
                 clearInterval(mockDataInterval);
                 isMockingData = false;
-                mockButton.textContent = "Start Mock Data";
+                mockButton.textContent = "Mock Data";
                 mockButton.classList.remove('bg-red-600', 'hover:bg-red-700');
                 mockButton.classList.add('bg-gray-700', 'hover:bg-gray-600');
                 updateGaugeDisplay('--.-');
@@ -379,11 +407,14 @@
                     return;
                 }
                 isMockingData = true;
-                mockButton.textContent = "Stop Mock Data (Live)";
+                mockButton.textContent = "Stop Mocking";
                 mockButton.classList.remove('bg-gray-700', 'hover:bg-gray-600');
                 mockButton.classList.add('bg-red-600', 'hover:bg-red-700');
                 connectButton.disabled = true;
-                startStopLogButton.disabled = false;
+                
+                // Only enable logging if DB is ready
+                startStopLogButton.disabled = !isAuthReady;
+                
                 updateStatus("Mock Data Running (Simulating PSI)", false, true);
 
                 mockDataInterval = setInterval(() => {
@@ -450,7 +481,9 @@
                 connectButton.textContent = "Connected (Live)";
                 connectButton.disabled = true;
                 mockButton.disabled = true;
-                startStopLogButton.disabled = false;
+
+                // Only enable logging if DB is ready
+                startStopLogButton.disabled = !isAuthReady;
 
             } catch (error) {
                 updateStatus(`GATT Error: ${error.message}. Check ESP32 NOTIFY property.`, true);
