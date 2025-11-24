@@ -27,9 +27,6 @@
             color: #6b7280; /* Gray-500 */
             margin-top: -1.5rem; /* Pull unit closer to the number */
         }
-        /* FIX: Removed sticky position from controls.
-           Instead, the main container now has a large bottom padding (pb-40) 
-           to reserve space, preventing overlap when scrolling or zooming. */
         .controls {
             padding: 1rem 0;
         }
@@ -95,7 +92,7 @@
             <!-- Data Log Status and Export -->
             <div class="mt-4 p-3 bg-gray-800 rounded-lg">
                 <div id="sessionStatus" class="text-gray-400 text-sm space-y-1 flex justify-between items-center">
-                    <p id="logStatus" class="text-yellow-500">Initializing database...</p>
+                    <p id="logStatus" class="text-red-500 font-semibold">Connecting to database...</p>
                     <p id="sessionCount" class="text-gray-500">Points: 0</p>
                 </div>
                 
@@ -112,17 +109,33 @@
     <script type="module">
         // Firebase Imports
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-        import { getAuth, signInAnonymously, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         import { getFirestore, collection, addDoc, query, where, getDocs, setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
         // IMPORTANT: Set Firestore logging level to Debug to see potential errors
         setLogLevel('debug'); 
 
+        // ----------------------------------------------------------------------
+        // CONFIGURATION FIREBASE PERSONNELLE
+        // Ces valeurs ont été fournies par l'utilisateur à partir de la console Firebase.
+        // ----------------------------------------------------------------------
+        const FIREBASE_CONFIG = {
+            apiKey: "AIzaSyCLqDL58iXAuWSzGYYwixSJoeA2_S4_LjY", 
+            authDomain: "oil-pressure-gauge.firebaseapp.com",
+            projectId: "oil-pressure-gauge", 
+            storageBucket: "oil-pressure-gauge.firebasestorage.app",
+            messagingSenderId: "459188403300",
+            appId: "1:459188403300:web:25fe9f2a6b91ca3e493371"
+        };
+        // ----------------------------------------------------------------------
+
+
         // Global Firebase and App Variables
         let db;
         let auth;
         let userId;
-        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+        // Using the projectId as the app identifier for the storage path
+        const appId = FIREBASE_CONFIG.projectId || 'manual-gauge-app'; 
         const LOG_COLLECTION_NAME = 'pressure_logs';
 
         // BLE Constants
@@ -157,23 +170,26 @@
             logStatusElement.textContent = "Connecting to database...";
 
             try {
-                const firebaseConfig = JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : '{}');
-                const app = initializeApp(firebaseConfig);
+                // Check if the critical configuration is missing 
+                if (!FIREBASE_CONFIG.apiKey || !FIREBASE_CONFIG.projectId) {
+                    throw new Error("Missing Firebase Credentials. Please update FIREBASE_CONFIG in the script.");
+                }
+
+                const app = initializeApp(FIREBASE_CONFIG);
                 db = getFirestore(app);
                 auth = getAuth(app);
                 
-                // AUTHENTICATION
-                if (typeof __initial_auth_token !== 'undefined') {
-                    await signInWithCustomToken(auth, __initial_auth_token);
-                } else {
-                    await signInAnonymously(auth);
-                }
+                // AUTHENTICATION: Using Anonymous Sign-in (must be enabled in console)
+                await signInAnonymously(auth);
                 
                 // Once authenticated, set user ID and ready flag
                 userId = auth.currentUser?.uid || crypto.randomUUID();
                 isAuthReady = true;
                 
                 logStatusElement.textContent = `DB Ready. User ID: ${userId.substring(0, 8)}...`;
+                logStatusElement.classList.remove('text-red-500');
+                logStatusElement.classList.add('text-green-500');
+
                 sessionCountElement.textContent = "Points: 0";
                 
                 // If a stream is active (mock or BLE), enable the logging button
@@ -183,8 +199,21 @@
 
             } catch (error) {
                 console.error("Firebase Initialization or Auth Error:", error);
-                logStatusElement.textContent = `Database Error: Failed to connect (${error.message.substring(0, 30)}...).`;
+                
+                let displayError = "Database Error: Check Console";
+                if (error.message.includes("Missing Firebase Credentials")) {
+                    displayError = "!!! REPLACE FIREBASE CREDENTIALS !!!";
+                } else if (error.message.includes("projectId")) {
+                    displayError = "DB Config Failed. Check Project ID.";
+                }
+
+                logStatusElement.textContent = displayError;
+                logStatusElement.classList.remove('text-green-500');
+                logStatusElement.classList.add('text-red-500');
+
                 isAuthReady = false;
+                startStopLogButton.disabled = true;
+                exportButton.disabled = true;
             }
         }
 
@@ -193,7 +222,8 @@
          */
         window.toggleLogging = function() {
             if (!isAuthReady) {
-                alert("Database is not ready. Please wait for DB Ready status.");
+                // Using a custom message instead of alert
+                logStatusElement.textContent = "DB Not Ready: Check config or connection.";
                 return;
             }
 
@@ -215,6 +245,9 @@
                 startStopLogButton.classList.add('bg-red-600', 'hover:bg-red-700');
                 
                 logStatusElement.textContent = `Recording Session ${currentSessionId.slice(-4)}...`;
+                logStatusElement.classList.remove('text-green-500', 'text-red-500');
+                logStatusElement.classList.add('text-blue-400'); // Blue for active recording
+                
                 updateStatus("Data LOGGING STARTED", false, true);
                 console.log(`[LOGGING] Session started: ${currentSessionId}`); 
 
@@ -225,6 +258,9 @@
                 startStopLogButton.classList.add('bg-orange-500', 'hover:bg-orange-600');
                 
                 logStatusElement.textContent = `Session ${currentSessionId.slice(-4)} FINISHED.`;
+                logStatusElement.classList.remove('text-blue-400');
+                logStatusElement.classList.add('text-green-500');
+
                 sessionCountElement.textContent = `Points: ${sessionDataPoints} logged`;
 
                 exportButton.disabled = (sessionDataPoints === 0); // Only enable export if points were logged
@@ -240,10 +276,10 @@
         async function logPressureReading(psiValue) {
             // CRITICAL CHECK: Ensure auth is ready before attempting to save
             if (!isAuthReady || !userId || !currentSessionId) {
-                console.warn("Attempted to log data: Auth or Session ID not ready. Dropping point.");
                 return;
             }
             
+            // Note: We use the FIREBASE_CONFIG.projectId as the artifact appId for simplicity when manual setup is used.
             const logPath = `/artifacts/${appId}/users/${userId}/${LOG_COLLECTION_NAME}`;
 
             try {
@@ -260,11 +296,9 @@
                     }
                 }).catch(error => {
                     console.error("CRITICAL ERROR writing document to Firestore:", error); 
-                    logStatusElement.textContent = `CRITICAL LOGGING ERROR! Check console.`;
                 });
                 
             } catch (error) {
-                // This catch block handles synchronous errors only (e.g., if db or logPath are invalid)
                 console.error("Synchronous logPressureReading Error:", error);
             }
         }
@@ -273,12 +307,9 @@
          * Fetches all documents for the last completed session and exports them as CSV.
          */
         window.exportSessionLog = async function() {
-            if (!currentSessionId) {
-                alert("No session was recorded or the last session was not properly closed.");
-                return;
-            }
-            if (!isAuthReady) {
-                 alert("Database initialization not complete. Please wait for DB Ready status.");
+            if (!currentSessionId || !isAuthReady) {
+                // Custom message if not ready
+                logStatusElement.textContent = "DB Not Ready or No Session Recorded!";
                 return;
             }
 
@@ -305,15 +336,11 @@
                 });
 
                 if (snapshot.docs.length === 0) {
-                     // Use a custom modal instead of alert
-                     console.error("Fetch successful, but 0 points found for this session. The data failed to write during logging.");
                      exportButton.textContent = "0 Points Fetched!";
                 } else {
-                    // Create a blob and trigger download
                     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
                     const fileName = `PSI_Log_${new Date(Number(exportId)).toISOString().slice(0, 19).replace('T', '_')}.csv`;
                     
-                    // Use a temporary link to trigger the download on the mobile device
                     const link = document.createElement('a');
                     link.href = URL.createObjectURL(blob);
                     link.setAttribute('download', fileName);
