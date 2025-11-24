@@ -1,4 +1,4 @@
-# 🌊 Live PSI Gauge (Web Bluetooth)
+# 🌊 Live oil pressure PSI Gauge (Web Bluetooth)
 
 This is a single-file, highly responsive web application designed to connect to an ESP32 microcontroller broadcasting pressure sensor readings (PSI) over Bluetooth Low Energy (BLE).
 
