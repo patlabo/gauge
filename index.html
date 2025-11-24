@@ -224,8 +224,15 @@
                     displayError = "!!! REPLACE FIREBASE CREDENTIALS !!!";
                 } else if (error.message.includes("projectId")) {
                     displayError = "DB Config Failed. Check Project ID.";
+                } else if (error.code) {
+                     displayError = `DB Auth Failed: ${error.code}`;
                 }
 
+                // CRITICAL: Ensure the core connection buttons are always enabled, 
+                // even if Firebase fails, so the user can still use the gauge.
+                connectButton.disabled = false;
+                mockButton.disabled = false;
+                
                 logStatusElement.textContent = displayError;
                 logStatusElement.classList.remove('text-green-500');
                 logStatusElement.classList.add('text-red-500');
@@ -365,8 +372,7 @@
                      logStatusElement.textContent = "0 Points Fetched!";
                 } else {
                     
-                    // 1. Trigger the download (using the same logic that works universally, 
-                    //    but requires manual finding on Bluefy/iOS)
+                    // 1. Trigger the download 
                     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
                     const fileName = `PSI_Log_${new Date(Number(exportId)).toISOString().slice(0, 19).replace('T', '_')}.csv`;
                     
@@ -437,7 +443,6 @@
             }
         }
         
-        // --- Bluetooth connection functions and Mock Data functions remain the same ---
         function handleCharacteristicValueChanged(event) {
             const value = event.target.value;
             const decoder = new TextDecoder('utf-8');
@@ -461,4 +466,136 @@
 
             } else {
                 if (bleDevice && bleDevice.gatt.connected) {
-                    updateStatus
+                    updateStatus("Error: Disconnect real device before running mock data.", true);
+                    return;
+                }
+                isMockingData = true;
+                mockButton.textContent = "Stop Mocking";
+                mockButton.classList.remove('bg-gray-700', 'hover:bg-gray-600');
+                mockButton.classList.add('bg-red-600', 'hover:bg-red-700');
+                connectButton.disabled = true;
+                
+                // Only enable logging if DB is ready
+                startStopLogButton.disabled = !isAuthReady;
+                
+                updateStatus("Mock Data Running (Simulating PSI)", false, true);
+
+                mockDataInterval = setInterval(() => {
+                    const delta = (Math.random() * 2) - 1;
+                    currentMockPsi = Math.max(0, Math.min(150, currentMockPsi + delta));
+                    
+                    updateGaugeDisplay(currentMockPsi.toFixed(1));
+                }, 100);
+            }
+        }
+        
+        window.requestDeviceAndConnect = async function() {
+            if (isMockingData) {
+                updateStatus("Mock data is running. Please stop it before connecting to Bluetooth.", true);
+                return;
+            }
+
+            if (!navigator.bluetooth) {
+                updateStatus("Error: Web Bluetooth not supported in this browser.", true);
+                console.error("Web Bluetooth is not supported in this browser. Please use Bluefy.");
+                return;
+            }
+
+            try {
+                updateStatus("Requesting device access...");
+                connectButton.disabled = true;
+                connectButton.textContent = "Scanning...";
+                mockButton.disabled = true;
+                
+                bleDevice = await navigator.bluetooth.requestDevice({
+                    filters: [{ services: [NUS_SERVICE_UUID] }],
+                });
+                
+                bleDevice.addEventListener('gattserverdisconnected', onDisconnected);
+                
+                updateStatus(`Found device: ${bleDevice.name}. Connecting...`);
+                await connectGATT();
+
+            } catch (error) {
+                updateStatus(`Connection Error: ${error.message}`, true);
+                connectButton.disabled = false;
+                connectButton.textContent = "Connect to ESP32 Gauge";
+                mockButton.disabled = false;
+            }
+        }
+
+        async function connectGATT() {
+            try {
+                const server = await bleDevice.gatt.connect();
+                updateStatus("Connected to GATT server. Discovering services...");
+                
+                const service = await server.getPrimaryService(NUS_SERVICE_UUID);
+                updateStatus("Discovered NUS service. Discovering characteristics...");
+
+                rxCharacteristic = await service.getCharacteristic(RX_CHAR_UUID);
+                updateStatus("Discovered RX characteristic. Subscribing to notifications...");
+
+                await rxCharacteristic.startNotifications();
+                rxCharacteristic.addEventListener('characteristicvaluechanged', handleCharacteristicValueChanged);
+
+                updateStatus("Subscribed to data stream (LIVE)", false);
+                statusElement.className = 'text-sm mt-1 text-green-500';
+                
+                connectButton.textContent = "Connected (Live)";
+                connectButton.disabled = true;
+                mockButton.disabled = true;
+
+                // Only enable logging if DB is ready
+                startStopLogButton.disabled = !isAuthReady;
+
+            } catch (error) {
+                updateStatus(`GATT Error: ${error.message}. Check ESP32 NOTIFY property.`, true);
+                connectButton.disabled = false;
+                connectButton.textContent = "Connect to ESP32 Gauge";
+                mockButton.disabled = false;
+                startStopLogButton.disabled = true;
+                if (bleDevice && bleDevice.gatt.connected) {
+                    bleDevice.gatt.disconnect();
+                }
+            }
+        }
+
+        function onDisconnected() {
+            updateStatus(`Device disconnected. Attempting to reconnect...`, true);
+            psiValueElement.textContent = '--.-';
+            connectButton.disabled = false;
+            connectButton.textContent = "Connect to ESP32 Gauge";
+            mockButton.disabled = false;
+            startStopLogButton.disabled = true;
+            downloadInstructionElement.classList.add('hidden');
+            if (isLogging) toggleLogging();
+
+            setTimeout(async () => {
+                 if (bleDevice) {
+                    try {
+                        updateStatus("Reconnecting...");
+                        await connectGATT();
+                    } catch (error) {
+                        updateStatus(`Reconnection failed: ${error.message}`, true);
+                        connectButton.disabled = false;
+                        connectButton.textContent = "Connect to ESP32 Gauge";
+                        mockButton.disabled = false;
+                    }
+                }
+            }, 2000);
+        }
+
+        // --- Initialization on load ---
+        window.onload = () => {
+            initializeFirebase();
+            // Ensure core UI is functional immediately
+            connectButton.disabled = false;
+            mockButton.disabled = false; 
+            
+            psiValueElement.textContent = '--.-';
+            updateStatus("Ready to connect. Tap the button or start mock data.");
+        };
+
+    </script>
+</body>
+</html>
