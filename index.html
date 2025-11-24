@@ -35,14 +35,25 @@
             height: 100%;
             margin: 0;
         }
+        /* Media query to reduce the height of the gauge area slightly in landscape to save vertical space */
+        @media (orientation: landscape) {
+            .gauge-display {
+                min-height: 50vh; /* Reduced from 40vh to 50vh of the *initial* container */
+            }
+        }
+        
+        /* Custom utility class for the download instruction text */
+        .download-info-text {
+            color: #3b82f6; /* Blue-500 */
+            font-weight: 500;
+        }
     </style>
 </head>
-<!-- Increased padding-bottom (pb-[18rem]) to create maximum clearance for the fixed control bar at the bottom. -->
+<!-- min-h-screen ensures we can scroll if content exceeds viewport height (CRITICAL for landscape) -->
 <body class="text-white">
-    <!-- h-screen ensures this container takes the full height of the viewport -->
-    <div class="flex flex-col h-screen p-4 pb-[18rem]"> 
+    <div class="flex flex-col min-h-screen p-4 pb-4 md:pb-8"> 
         
-        <header class="text-center py-6">
+        <header class="text-center py-4">
             <h1 class="text-2xl font-bold text-blue-400">ESP32 Live Pressure Gauge</h1>
             <p id="status" class="text-sm mt-1 text-yellow-500">
                 Connection Status: Disconnected
@@ -62,11 +73,11 @@
             </div>
         </main>
 
-        <!-- Controls and Logs: Fixed position at the bottom of the viewport -->
-        <div class="fixed bottom-0 left-0 right-0 p-4 bg-gray-900 shadow-2xl border-t border-gray-700 z-10">
+        <!-- Controls and Logs: Adjusted spacing and sizes for better fit, especially in landscape -->
+        <div class="p-2 pt-4 bg-gray-900 shadow-2xl border-t border-gray-700 z-10 w-full mx-auto max-w-lg rounded-t-xl">
             <!-- Bluetooth Connect Button -->
             <button id="connectButton" onclick="requestDeviceAndConnect()"
-                    class="w-full py-4 text-xl font-semibold rounded-xl transition-all duration-200 shadow-lg 
+                    class="w-full py-3 text-lg font-semibold rounded-xl transition-all duration-200 shadow-lg 
                            bg-blue-600 hover:bg-blue-700 active:scale-95">
                 Connect to ESP32 Gauge
             </button>
@@ -74,14 +85,14 @@
             <div class="flex space-x-3 mt-3">
                  <!-- Mock Data Button -->
                 <button id="mockButton" onclick="toggleMockData()"
-                        class="flex-1 py-3 text-lg font-medium rounded-xl transition-all duration-200 shadow-lg 
+                        class="flex-1 py-2 text-base font-medium rounded-xl transition-all duration-200 shadow-lg 
                             bg-gray-700 hover:bg-gray-600 active:scale-95">
                     Mock Data
                 </button>
                 
-                <!-- NEW: Start/Stop Logging Button -->
+                <!-- Start/Stop Logging Button -->
                 <button id="startStopLogButton" onclick="toggleLogging()" disabled
-                        class="flex-1 py-3 text-lg font-medium rounded-xl transition-all duration-200 shadow-lg disabled:opacity-50
+                        class="flex-1 py-2 text-base font-medium rounded-xl transition-all duration-200 shadow-lg disabled:opacity-50
                             bg-orange-500 hover:bg-orange-600 active:scale-95">
                     Start Logging
                 </button>
@@ -90,12 +101,16 @@
             
             <!-- Data Log Status and Export -->
             <div class="mt-4 p-3 bg-gray-800 rounded-lg">
-                <div id="sessionStatus" class="text-gray-400 text-sm space-y-1 flex justify-between items-center">
+                <div id="sessionStatus" class="text-gray-400 text-sm space-y-1 flex flex-col">
                     <p id="logStatus" class="text-red-500 font-semibold">Connecting to database...</p>
                     <p id="sessionCount" class="text-gray-500">Points: 0</p>
+                    <!-- Dedicated line for download instructions -->
+                    <p id="downloadInstruction" class="download-info-text text-xs hidden mt-1">
+                        Pour l'ouvrir, vérifiez le gestionnaire de téléchargement de Bluefy (ou Safari) en haut à droite.
+                    </p>
                 </div>
                 
-                <!-- Export Button (Hidden until a session is stopped) -->
+                <!-- Export Button -->
                 <button id="exportButton" onclick="exportSessionLog()" disabled
                         class="w-full mt-3 py-2 text-md font-medium rounded-xl transition-all duration-200 shadow-lg disabled:opacity-50
                             bg-green-600 hover:bg-green-700 active:scale-95">
@@ -103,6 +118,7 @@
                 </button>
             </div>
         </div>
+        
     </div>
 
     <script type="module">
@@ -161,6 +177,7 @@
         const logStatusElement = document.getElementById('logStatus');
         const sessionCountElement = document.getElementById('sessionCount'); 
         const exportButton = document.getElementById('exportButton'); 
+        const downloadInstructionElement = document.getElementById('downloadInstruction'); // New permanent instruction element
 
         /**
          * Initialize Firebase and perform custom authentication.
@@ -221,7 +238,6 @@
          */
         window.toggleLogging = function() {
             if (!isAuthReady) {
-                // Using a custom message instead of alert
                 logStatusElement.textContent = "DB Not Ready: Check config or connection.";
                 return;
             }
@@ -238,13 +254,14 @@
                 currentSessionId = Date.now().toString(); 
                 sessionDataPoints = 0; 
                 exportButton.disabled = true;
+                downloadInstructionElement.classList.add('hidden'); // Hide instructions during logging
                 
                 startStopLogButton.textContent = "Stop Logging";
                 startStopLogButton.classList.remove('bg-orange-500', 'hover:bg-orange-600');
                 startStopLogButton.classList.add('bg-red-600', 'hover:bg-red-700');
                 
                 logStatusElement.textContent = `Recording Session ${currentSessionId.slice(-4)}...`;
-                logStatusElement.classList.remove('text-green-500', 'text-red-500');
+                logStatusElement.classList.remove('text-green-500', 'text-red-500', 'text-blue-600');
                 logStatusElement.classList.add('text-blue-400'); // Blue for active recording
                 
                 updateStatus("Data LOGGING STARTED", false, true);
@@ -256,7 +273,7 @@
                 startStopLogButton.classList.remove('bg-red-600', 'hover:bg-red-700');
                 startStopLogButton.classList.add('bg-orange-500', 'hover:bg-orange-600');
                 
-                logStatusElement.textContent = `Session ${currentSessionId.slice(-4)} FINISHED.`;
+                logStatusElement.textContent = `Session ${currentSessionId.slice(-4)} FINISHED. Ready to Download.`;
                 logStatusElement.classList.remove('text-blue-400');
                 logStatusElement.classList.add('text-green-500');
 
@@ -290,12 +307,13 @@
                     timestamp: Date.now(), 
                     sessionId: currentSessionId, 
                 }).then(() => {
-                    // This block executes ONLY if the write was successful (i.e., Security Rules allowed it)
+                    // This block executes ONLY if the write was successful
                     sessionDataPoints++; // Increment count only on successful save
                     if (isLogging) {
                         sessionCountElement.textContent = `Points: ${sessionDataPoints}`;
                     }
                 }).catch(error => {
+                    // This error is crucial if logging fails; usually due to Security Rules.
                     console.error("CRITICAL ERROR writing document to Firestore (Check Security Rules!):", error); 
                 });
                 
@@ -308,9 +326,12 @@
          * Fetches all documents for the last completed session and exports them as CSV.
          */
         window.exportSessionLog = async function() {
-            if (!currentSessionId || !isAuthReady) {
-                // Custom message if not ready
-                logStatusElement.textContent = "DB Not Ready or No Session Recorded!";
+            if (!currentSessionId || isLogging || !isAuthReady) {
+                logStatusElement.textContent = "Error: Stop logging first or DB not ready.";
+                return;
+            }
+            if (sessionDataPoints === 0) {
+                 logStatusElement.textContent = "Error: No points to download!";
                 return;
             }
 
@@ -331,17 +352,19 @@
                     const data = doc.data();
                     const date = new Date(data.timestamp);
                     const isoTime = date.toISOString();
+                    // Include milliseconds for high-resolution logs
                     const localTime = date.toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit', fractionalSecondDigits: 3 });
                     
                     csvContent += `${isoTime},${localTime},${data.psi.toFixed(2)}\n`;
                 });
 
                 if (snapshot.docs.length === 0) {
-                     exportButton.textContent = "0 Points Fetched!";
+                     logStatusElement.textContent = "0 Points Fetched!";
                 } else {
                     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
                     const fileName = `PSI_Log_${new Date(Number(exportId)).toISOString().slice(0, 19).replace('T', '_')}.csv`;
                     
+                    // Trigger the download
                     const link = document.createElement('a');
                     link.href = URL.createObjectURL(blob);
                     link.setAttribute('download', fileName);
@@ -349,22 +372,23 @@
                     document.body.appendChild(link);
                     link.click();
                     document.body.removeChild(link);
-
-                    exportButton.textContent = `Download Successful! (${snapshot.docs.length} points)`;
+                    
+                    // --- Show user feedback and download location hint ---
+                    logStatusElement.textContent = `Download Successful! ${snapshot.docs.length} points exported.`;
+                    downloadInstructionElement.classList.remove('hidden');
                 }
                 
             } catch (error) {
                 console.error("CSV Export Error:", error);
-                exportButton.textContent = "Export Failed!";
+                logStatusElement.textContent = "Export Failed!";
             }
             
             // Re-enable the button after a delay
             setTimeout(() => {
-                if (!isLogging) {
-                    exportButton.disabled = false;
-                    exportButton.textContent = "Download Log (.csv)";
-                }
-            }, 3000);
+                // Always re-enable export button 
+                exportButton.disabled = false;
+                exportButton.textContent = "Download Log (.csv)";
+            }, 5000);
         }
 
         /**
@@ -427,6 +451,7 @@
                 updateStatus("Mock Data Stopped. Ready to connect.");
                 connectButton.disabled = false;
                 startStopLogButton.disabled = true;
+                downloadInstructionElement.classList.add('hidden'); // Hide instructions if mock stops
                 if (isLogging) toggleLogging();
 
             } else {
@@ -532,6 +557,7 @@
             connectButton.textContent = "Connect to ESP32 Gauge";
             mockButton.disabled = false;
             startStopLogButton.disabled = true;
+            downloadInstructionElement.classList.add('hidden'); // Hide instructions if disconnected
             if (isLogging) toggleLogging();
 
             setTimeout(async () => {
@@ -555,7 +581,3 @@
             psiValueElement.textContent = '--.-';
             updateStatus("Ready to connect. Tap the button or start mock data.");
         };
-
-    </script>
-</body>
-</html>
