@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Live PSI Gauge - Session Management</title>
+    <title>Live PSI Gauge - Last Session ID Display</title>
     <!-- Load Tailwind CSS for modern, responsive styling -->
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
@@ -33,71 +33,26 @@
             overflow-x: hidden;
         }
         
-        /* Modal Backdrop Style */
-        .modal-backdrop {
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            background-color: rgba(0, 0, 0, 0.8);
-            z-index: 20;
-            display: none; /* Controlled by JS */
-            align-items: center;
-            justify-content: center;
-        }
-        
-        /* Modal Content Style (The Session Panel) */
-        .session-panel {
-            background-color: #1f2937; /* Darker blue-gray */
-            max-height: 90vh;
-            width: 95%;
-            max-width: 600px;
-            overflow-y: auto;
-        }
-        
         /* --- LANDSCAPE FULL-SCREEN HIDING LOGIC --- */
         @media (orientation: landscape) {
             /* Base hidden state for header and controls in landscape mode */
             .hide-in-landscape {
-                opacity: 0 !important;
-                pointer-events: none !important; 
-                visibility: hidden !important;
+            opacity: 0 !important;
+            pointer-events: none !important; 
+            visibility: hidden !important;
             }
             
             /* State applied by JS on tap */
             .show-in-landscape {
-                opacity: 1 !important;
-                pointer-events: auto !important; 
-                visibility: visible !important;
+            opacity: 1 !important;
+            pointer-events: auto !important; 
+            visibility: visible !important;
             }
         }
         /* --- END LANDSCAPE LOGIC --- */
     </style>
 </head>
 <body class="text-white">
-
-    <!-- Session Management Panel (Modal) -->
-    <div id="sessionModalBackdrop" class="modal-backdrop">
-        <div class="session-panel p-6 rounded-xl shadow-2xl transition-all duration-300 transform scale-95 opacity-0">
-            <h2 class="text-2xl font-bold mb-4 text-blue-300 border-b border-gray-600 pb-2">All Recorded Sessions</h2>
-            
-            <p id="sessionListStatus" class="text-yellow-400 mb-4">Loading sessions from Firestore...</p>
-            
-            <div id="sessionsList" class="space-y-3 max-h-96 overflow-y-auto pr-2">
-                <!-- Session items will be dynamically inserted here -->
-            </div>
-            
-            <button onclick="closeSessionPanel()"
-                    class="w-full mt-6 py-3 text-lg font-semibold rounded-xl transition-all duration-200 shadow-lg 
-                           bg-gray-600 hover:bg-gray-700 active:scale-95">
-                Close
-            </button>
-        </div>
-    </div>
-    <!-- End Session Management Panel -->
-
-
     <!-- Main Flex Container: Column layout, minimum full screen height -->
     <div id="mainAppContainer" class="flex flex-col min-h-screen p-4 pb-4 md:pb-8"> 
         
@@ -147,20 +102,20 @@
             </div>
 
             
-            <!-- Data Log Status and Session Management Button -->
+            <!-- Data Log Status and Export (Simplified) -->
             <div class="mt-4 p-3 bg-gray-800 rounded-lg">
                 <div id="sessionStatus" class="text-gray-400 text-sm space-y-1 flex flex-col">
                     <p id="logStatus" class="text-yellow-500 font-semibold">DB Status: Initializing...</p>
                     <p id="sessionCount" class="text-gray-500">Points: 0</p>
                 </div>
                 
-                <!-- Session Management Button -->
-                <button id="manageSessionsButton" onclick="openSessionPanel()" disabled
+                <!-- Export/ID Button -->
+                <button id="exportButton" onclick="handleExportClick()" disabled
                         class="w-full mt-3 py-2 text-md font-medium rounded-xl transition-all duration-200 shadow-lg disabled:opacity-50
                             bg-green-600 hover:bg-green-700 active:scale-95">
-                    Manage & Download Sessions
+                    Prepare Export (Click to find last session)
                 </button>
-                <p class="text-xs text-gray-500 mt-2 text-center">View all recorded sessions for easy export later.</p>
+                <p class="text-xs text-gray-500 mt-2 text-center">Cliquez ici pour récupérer l'ID de la dernière session et exporter.</p>
             </div>
         </div>
         
@@ -170,7 +125,7 @@
         // Firebase Imports
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
         import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import { getFirestore, collection, addDoc, query, where, getDocs, setLogLevel, limit, getCountFromServer, orderBy } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { getFirestore, collection, addDoc, query, where, getDocs, setLogLevel, limit, orderBy } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
         // IMPORTANT: Set Firestore logging level to Debug to see potential errors
         setLogLevel('debug'); 
@@ -194,7 +149,6 @@
         let db;
         let auth;
         let userId;
-        // Using the projectId as the app identifier for the storage path
         const appId = FIREBASE_CONFIG.projectId || 'manual-gauge-app'; 
         const LOG_COLLECTION_NAME = 'pressure_logs';
 
@@ -209,10 +163,11 @@
         let isMockingData = false;
         let isLogging = false; 
         let currentMockPsi = 50.0; 
-        let isAuthReady = false; // Auth flag is critical
+        let isAuthReady = false; 
         let currentSessionId = null; 
         let sessionDataPoints = 0; 
-        let controlsVisible = false; // State for tap-to-show feature
+        let controlsVisible = false; 
+        let lastFoundSessionId = null; // New state to hold the ID we want to export
 
         // UI Elements
         const psiValueElement = document.getElementById('psiValue');
@@ -222,165 +177,105 @@
         const startStopLogButton = document.getElementById('startStopLogButton');
         const logStatusElement = document.getElementById('logStatus');
         const sessionCountElement = document.getElementById('sessionCount'); 
-        const manageSessionsButton = document.getElementById('manageSessionsButton'); // New button
+        const exportButton = document.getElementById('exportButton'); 
         const headerContainer = document.getElementById('headerContainer');
         const controlsContainer = document.getElementById('controlsContainer');
-        const sessionModalBackdrop = document.getElementById('sessionModalBackdrop');
-        const sessionPanelContent = sessionModalBackdrop.querySelector('.session-panel');
-        const sessionsListElement = document.getElementById('sessionsList');
-        const sessionListStatusElement = document.getElementById('sessionListStatus');
         
         // Tailwind color classes to manage
         const COLOR_CLASSES = ['text-white', 'text-yellow-400', 'text-orange-400', 'text-red-500'];
 
-        // --- Utility Functions for Session Management ---
-
-        /**
-         * Opens the session management panel and loads all session IDs.
-         */
-        window.openSessionPanel = function() {
-            if (!isAuthReady) {
-                alert("Database is not ready. Please wait for initialization.");
-                return;
-            }
-            
-            // Show modal
-            sessionModalBackdrop.style.display = 'flex';
-            // Trigger animation
-            setTimeout(() => {
-                sessionPanelContent.classList.remove('scale-95', 'opacity-0');
-                sessionPanelContent.classList.add('scale-100', 'opacity-100');
-            }, 10);
-
-            loadAllSessions();
-        }
-
-        /**
-         * Closes the session management panel.
-         */
-        window.closeSessionPanel = function() {
-            sessionPanelContent.classList.remove('scale-100', 'opacity-100');
-            sessionPanelContent.classList.add('scale-95', 'opacity-0');
-            
-            setTimeout(() => {
-                sessionModalBackdrop.style.display = 'none';
-            }, 300); // Wait for transition
-        }
-
-
-        /**
-         * Helper function to get the base path for user-specific logs.
-         * @returns {string} The Firestore collection path.
-         */
-        function getLogCollectionPath() {
-            // Path: /artifacts/{appId}/users/{userId}/pressure_logs
-            return `/artifacts/${appId}/users/${userId}/${LOG_COLLECTION_NAME}`;
-        }
+        // --- EXPORT LOGIC ---
         
         /**
-         * Fetches a list of all unique Session IDs for the current user.
+         * Determines the action when the export button is clicked.
+         * 1. If no ID is staged, it finds the last session ID and stages it.
+         * 2. If an ID is staged, it performs the export.
          */
-        async function loadAllSessions() {
-            sessionListStatusElement.textContent = "Loading sessions from Firestore...";
-            sessionsListElement.innerHTML = '';
-            
-            if (!isAuthReady || !userId) {
-                sessionListStatusElement.textContent = "Error: Authentication not complete.";
+        window.handleExportClick = async function() {
+            if (!isAuthReady || isLogging) {
+                const msg = isLogging ? "Stop logging first." : "Database not ready.";
+                logStatusElement.textContent = `DB Status: ${msg}`;
                 return;
             }
 
+            if (lastFoundSessionId) {
+                // Step 2: An ID is staged, proceed to download.
+                await exportSessionLog(lastFoundSessionId);
+                // Reset the export state after download attempt
+                lastFoundSessionId = null;
+                exportButton.textContent = "Prepare Export (Click to find last session)";
+                exportButton.classList.remove('bg-yellow-600', 'hover:bg-yellow-700');
+                exportButton.classList.add('bg-green-600', 'hover:bg-green-700');
+
+            } else {
+                // Step 1: Find the latest session ID and stage it.
+                await findLastSessionId();
+            }
+        }
+
+
+        /**
+         * Finds the ID of the last recorded session.
+         */
+        async function findLastSessionId() {
+            exportButton.disabled = true;
+            exportButton.textContent = "Finding last session ID...";
+            
             try {
-                // 1. Get all documents and group by sessionId
                 const logPath = getLogCollectionPath();
-                const q = query(collection(db, logPath));
                 
-                const snapshot = await getDocs(q);
-                const sessionsMap = {}; // Map to store {sessionId: {count: N, startTimestamp: T}}
-                
-                // Aggregate data to find unique sessions and count points
-                snapshot.forEach(doc => {
-                    const data = doc.data();
-                    const sessionId = data.sessionId;
-                    const timestamp = data.timestamp;
+                // Query Firestore: Order by sessionId (timestamp) descending, limit 1
+                const latestSessionQuery = query(
+                    collection(db, logPath), 
+                    orderBy("sessionId", "desc"),
+                    limit(1)
+                );
 
-                    if (!sessionsMap[sessionId]) {
-                        // Use the sessionId (which is the start timestamp) as the unique ID
-                        sessionsMap[sessionId] = { 
-                            count: 0, 
-                            sessionId: sessionId, 
-                            startTimestamp: Number(sessionId) // The sessionId is the starting timestamp
-                        };
-                    }
-                    sessionsMap[sessionId].count++;
-                });
+                const snapshot = await getDocs(latestSessionQuery);
 
-                const sessionList = Object.values(sessionsMap).sort((a, b) => b.startTimestamp - a.startTimestamp);
-                
-                if (sessionList.length === 0) {
-                    sessionListStatusElement.textContent = "No sessions recorded yet.";
-                    return;
+                if (snapshot.empty) {
+                    logStatusElement.textContent = "DB Status: No sessions recorded yet.";
+                    exportButton.textContent = "No Sessions Found";
+                    lastFoundSessionId = null;
+                } else {
+                    const latestId = snapshot.docs[0].data().sessionId;
+                    lastFoundSessionId = latestId;
+                    
+                    const sessionDateString = new Date(Number(latestId)).toLocaleTimeString('en-US', { hour12: false, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
+                    
+                    logStatusElement.textContent = `DB Status: Last session found: ${sessionDateString}`;
+                    
+                    // Change button appearance to prompt the second click
+                    exportButton.classList.remove('bg-green-600', 'hover:bg-green-700');
+                    exportButton.classList.add('bg-yellow-600', 'hover:bg-yellow-700');
+                    exportButton.textContent = `CONFIRM DOWNLOAD: Session ID ${latestId.substring(4)}`; // Use substring to shorten display
+
                 }
 
-                // 2. Render the list
-                sessionListStatusElement.textContent = `${sessionList.length} total sessions found.`;
-                
-                sessionList.forEach(session => {
-                    const sessionDate = new Date(session.startTimestamp).toLocaleString();
-                    const item = document.createElement('div');
-                    item.className = 'flex justify-between items-center p-3 bg-gray-700 rounded-lg hover:bg-gray-600 cursor-pointer transition-colors duration-150 shadow-md';
-                    item.innerHTML = `
-                        <div class="flex flex-col">
-                            <span class="text-white font-semibold text-base">${sessionDate}</span>
-                            <span class="text-gray-400 text-xs">Points: ${session.count}</span>
-                        </div>
-                        <button data-session-id="${session.sessionId}" 
-                                class="download-btn bg-green-500 hover:bg-green-600 text-white text-sm py-1 px-3 rounded-md transition-colors duration-150">
-                            Download CSV
-                        </button>
-                    `;
-                    sessionsListElement.appendChild(item);
-                });
-
-                // 3. Attach click handlers to the new download buttons
-                sessionsListElement.querySelectorAll('.download-btn').forEach(button => {
-                    button.addEventListener('click', (e) => {
-                        const sessionId = e.target.getAttribute('data-session-id');
-                        exportSessionLog(sessionId);
-                    });
-                });
-
             } catch (error) {
-                console.error("Error loading sessions:", error);
-                sessionListStatusElement.textContent = "Error loading sessions. Check console for details.";
+                console.error("Error finding last session:", error);
+                logStatusElement.textContent = "DB Status: Export Failed (Error in query).";
+                lastFoundSessionId = null;
             }
+            
+            exportButton.disabled = false;
         }
 
 
         /**
          * Fetches all documents for the specified session ID and exports them as CSV.
-         * @param {string} sessionIdToExport - The full Session ID (timestamp string) to retrieve.
          */
-        window.exportSessionLog = async function(sessionIdToExport) {
+        async function exportSessionLog(sessionIdToExport) {
             
-            // Disable the panel buttons temporarily
-            sessionsListElement.querySelectorAll('.download-btn').forEach(btn => {
-                btn.disabled = true;
-                if (btn.getAttribute('data-session-id') === sessionIdToExport) {
-                    btn.textContent = "Downloading...";
-                }
-            });
-
-            if (!isAuthReady || !userId || isLogging) {
-                console.error("Cannot export: Auth not ready or logging is active.");
-                alert("Cannot export: Please stop logging and ensure the database is ready.");
-                // Re-enable buttons if error occurs
-                sessionsListElement.querySelectorAll('.download-btn').forEach(btn => btn.disabled = false);
-                return;
-            }
+            exportButton.disabled = true;
+            exportButton.textContent = `Fetching data for session ${sessionIdToExport.substring(4)}...`;
 
             const logPath = getLogCollectionPath();
-            // CRITICAL: Query MUST use the exact sessionId
-            const q = query(collection(db, logPath), where("sessionId", "==", sessionIdToExport));
+            // Query for the exact session ID, ordered by timestamp
+            const q = query(collection(db, logPath), 
+                            where("sessionId", "==", sessionIdToExport),
+                            orderBy("timestamp", "asc") 
+                        );
             
             try {
                 const snapshot = await getDocs(q);
@@ -391,7 +286,6 @@
                     const data = doc.data();
                     const date = new Date(data.timestamp);
                     const isoTime = date.toISOString();
-                    // Local time for easy reading
                     const localTime = date.toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit', fractionalSecondDigits: 3 });
                     
                     csvContent += `${isoTime},${localTime},${data.psi.toFixed(2)}\n`;
@@ -399,13 +293,12 @@
                 });
 
                 if (downloadedCount === 0) {
-                     sessionListStatusElement.textContent = `No data found for session ${sessionIdToExport}.`;
+                     logStatusElement.textContent = `DB Status: No data found for session ${sessionIdToExport}.`;
                 } else {
-                    
-                    // 1. Trigger the download 
+                    // Trigger the download 
                     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-                    // Filename is based on the session ID (the starting timestamp)
-                    const fileName = `PSI_Log_${new Date(Number(sessionIdToExport)).toISOString().slice(0, 19).replace('T', '_')}.csv`;
+                    const sessionDateString = new Date(Number(sessionIdToExport)).toISOString().slice(0, 19).replace('T', '_').replace(/:/g, '-');
+                    const fileName = `PSI_Log_Session_${sessionDateString}.csv`;
                     
                     const link = document.createElement('a');
                     link.href = URL.createObjectURL(blob);
@@ -415,34 +308,32 @@
                     link.click();
                     document.body.removeChild(link);
                     
-                    // 2. Update Status
-                    sessionListStatusElement.textContent = `Downloaded ${downloadedCount} points for session ${sessionIdToExport}.`;
+                    logStatusElement.textContent = `DB Status: Downloaded ${downloadedCount} points from session ${sessionDateString}.`;
                 }
                 
             } catch (error) {
                 console.error("CSV Export Error:", error);
-                sessionListStatusElement.textContent = "CSV Export Failed!";
+                logStatusElement.textContent = "DB Status: Export Failed!";
             }
             
-            // Re-enable buttons
-            sessionsListElement.querySelectorAll('.download-btn').forEach(btn => {
-                btn.disabled = false;
-                if (btn.getAttribute('data-session-id') === sessionIdToExport) {
-                    btn.textContent = "Download CSV";
-                }
-            });
-            
-            // Close panel after success/failure
-            closeSessionPanel();
+            exportButton.disabled = false;
         }
 
-        // --- Layout and BLE/Mock Code (mostly unchanged) ---
-
+        // --- Core App Logic (Unchanged) ---
+        
+        /**
+         * Helper function to get the base path for user-specific logs.
+         * @returns {string} The Firestore collection path.
+         */
+        function getLogCollectionPath() {
+            // Path: /artifacts/{appId}/users/{userId}/pressure_logs
+            return `/artifacts/${appId}/users/${userId}/${LOG_COLLECTION_NAME}`;
+        }
+        
         /**
          * Checks if the device is currently in landscape orientation.
          */
         function isLandscape() {
-            // Uses standard window property to detect orientation
             return window.matchMedia("(orientation: landscape)").matches;
         }
 
@@ -450,7 +341,7 @@
          * Toggles the visibility of the header and control panel on tap, but ONLY in landscape mode.
          */
         function toggleControlsOnTap(event) {
-            if (!isLandscape() || sessionModalBackdrop.style.display === 'flex') {
+            if (!isLandscape()) {
                 return;
             }
 
@@ -520,7 +411,6 @@
                 db = getFirestore(app);
                 auth = getAuth(app);
                 
-                // IMPORTANT: Use signInAnonymously if no __initial_auth_token is provided
                 await signInAnonymously(auth);
                 
                 userId = auth.currentUser?.uid || crypto.randomUUID();
@@ -530,8 +420,8 @@
                 logStatusElement.classList.remove('text-red-500', 'text-yellow-500');
                 logStatusElement.classList.add('text-green-500');
 
-                // Enable the session management button
-                manageSessionsButton.disabled = false;
+                // Enable the export button once DB is ready
+                exportButton.disabled = false;
                 
                 if (bleDevice || isMockingData) {
                     startStopLogButton.disabled = false;
@@ -554,7 +444,7 @@
 
                 isAuthReady = false;
                 startStopLogButton.disabled = true;
-                manageSessionsButton.disabled = true;
+                exportButton.disabled = true;
             }
         }
 
@@ -578,15 +468,20 @@
                 // START LOGGING: Create a new session ID (the current timestamp)
                 currentSessionId = Date.now().toString(); 
                 sessionDataPoints = 0; 
+                lastFoundSessionId = null; // Clear staged ID when starting new session
                 
                 startStopLogButton.textContent = "Stop Logging";
                 startStopLogButton.classList.remove('bg-orange-500', 'hover:bg-orange-600');
                 startStopLogButton.classList.add('bg-red-600', 'hover:bg-red-700');
                 
-                logStatusElement.textContent = `DB Status: Recording Session...`;
+                logStatusElement.textContent = `DB Status: Recording...`;
                 logStatusElement.classList.remove('text-green-500', 'text-red-500', 'text-yellow-500');
                 logStatusElement.classList.add('text-blue-400'); // Blue for active recording
                 
+                exportButton.textContent = "Prepare Export (Click to find last session)";
+                exportButton.classList.remove('bg-yellow-600', 'hover:bg-yellow-700');
+                exportButton.classList.add('bg-green-600', 'hover:bg-green-700');
+
                 updateStatus("LIVE - Recording");
                 console.log(`[LOGGING] Session started: ${currentSessionId}`); 
 
@@ -596,6 +491,9 @@
                 startStopLogButton.classList.remove('bg-red-600', 'hover:bg-red-700');
                 startStopLogButton.classList.add('bg-orange-500', 'hover:bg-orange-600');
                 
+                // Keep the ID for export: it is now the last session ID
+                // currentSessionId remains set to the ID of the session just completed
+                
                 logStatusElement.textContent = `DB Status: Logged ${sessionDataPoints} points (ID: ${currentSessionId.substring(4)}...).`;
                 logStatusElement.classList.remove('text-blue-400', 'text-red-500');
                 logStatusElement.classList.add('text-green-500');
@@ -604,13 +502,18 @@
 
                 updateStatus("LIVE - Stopped Logging");
                 console.log(`[LOGGING] Session finished. Total points: ${sessionDataPoints}`); 
-                currentSessionId = null; // Clear session ID
+                
+                // Automatically stage the just-finished session ID for export
+                lastFoundSessionId = currentSessionId; 
+                const sessionDateString = new Date(Number(currentSessionId)).toLocaleTimeString('en-US', { hour12: false, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
+                exportButton.classList.remove('bg-green-600', 'hover:bg-green-700');
+                exportButton.classList.add('bg-yellow-600', 'hover:bg-yellow-700');
+                exportButton.textContent = `DOWNLOAD: Session ${sessionDateString} (Click to confirm)`;
             }
         }
 
         /**
          * Saves a pressure reading to Firestore.
-         * @param {number} psiValue - The pressure value (PSI).
          */
         async function logPressureReading(psiValue) {
             if (!isAuthReady || !userId || !currentSessionId) {
@@ -620,7 +523,6 @@
             const logPath = getLogCollectionPath();
 
             try {
-                // We don't use the timestamp for the sessionId, we use the one created at toggleLogging start
                 addDoc(collection(db, logPath), {
                     psi: psiValue,
                     timestamp: Date.now(), 
