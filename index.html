@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Live PSI Gauge - Bluetooth Fix</title>
+    <title>Live PSI Gauge - Bluetooth Final Filter</title>
     <!-- Load Tailwind CSS for modern, responsive styling -->
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
@@ -328,12 +328,9 @@
                 
                 console.log("[BLE] Calling navigator.bluetooth.requestDevice...");
                 
-                // --- FIX: COMBINING NAME AND SERVICE INTO A SINGLE FILTER OBJECT ---
-                // This ensures the device is listed only if it matches the name AND provides the NUS service.
+                // --- FIX: Filtering by the Service UUID only for maximum device visibility. ---
                 bleDevice = await navigator.bluetooth.requestDevice({
-                    filters: [
-                        { name: 'OilPressureSensor', services: [NUS_SERVICE_UUID] }
-                    ],
+                    filters: [{ services: [NUS_SERVICE_UUID] }],
                     optionalServices: [NUS_SERVICE_UUID]
                 });
                 // ------------------------------------------------------------------
