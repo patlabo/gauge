@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Live PSI Gauge - Bluetooth Final Filter</title>
+    <title>Live PSI Gauge - Final Bluetooth Fix</title>
     <!-- Load Tailwind CSS for modern, responsive styling -->
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
@@ -107,16 +107,17 @@
     </div>
 
     <script>
-        // BLE Constants (Nordic UART Service)
-        const NUS_SERVICE_UUID = '6e400001-b5a3-f393-e0a9-e50e24dcca9e';
-        const RX_CHAR_UUID = '6e400003-b5a3-f393-e0a9-e50e24dcca9e'; 
+        // --- FIX: UPDATED UUIDs TO MATCH THE C++ FIRMWARE ---
+        const SERVICE_UUID = '4fafc201-1fb5-459e-8fcc-c5c9c331914b';
+        const RX_CHAR_UUID = 'beb5483e-36e1-4688-b7f5-ea07361b26a8'; 
+        // ----------------------------------------------------
 
         // State Variables
         let bleDevice = null;
         let rxCharacteristic = null;
         let mockDataInterval = null; 
         let isMockingData = false;
-        let currentMockPsi = 50.0; // Start mock data in the white range
+        let currentMockPsi = 50.0; 
         let controlsVisible = true; 
 
         // UI Elements
@@ -204,7 +205,7 @@
         // --- Data & Display Logic ---
 
         function updateStatus(text, isError = false, isMock = false) {
-            console.log(`[STATUS] ${text}`); // Extra logging for status changes
+            console.log(`[STATUS] ${text}`); 
             statusElement.textContent = `Status: ${text}`;
             if (isMock) {
                 statusElement.className = 'text-sm mt-1 text-purple-400';
@@ -214,6 +215,7 @@
         }
 
         function updateGaugeDisplay(dataString) {
+            // Use parseFloat as the C++ code is now sending a string
             const psi = parseFloat(dataString.trim());
             
             if (!isNaN(psi)) {
@@ -328,12 +330,11 @@
                 
                 console.log("[BLE] Calling navigator.bluetooth.requestDevice...");
                 
-                // --- FIX: Filtering by the Service UUID only for maximum device visibility. ---
+                // Using the custom SERVICE_UUID for filtering
                 bleDevice = await navigator.bluetooth.requestDevice({
-                    filters: [{ services: [NUS_SERVICE_UUID] }],
-                    optionalServices: [NUS_SERVICE_UUID]
+                    filters: [{ services: [SERVICE_UUID] }],
+                    optionalServices: [SERVICE_UUID]
                 });
-                // ------------------------------------------------------------------
                 
                 bleDevice.addEventListener('gattserverdisconnected', onDisconnected);
                 console.log(`[BLE] Device selected: ${bleDevice.name}`);
@@ -362,7 +363,7 @@
                 const server = await bleDevice.gatt.connect();
                 updateStatus("Connected. Discovering services...");
                 
-                const service = await server.getPrimaryService(NUS_SERVICE_UUID);
+                const service = await server.getPrimaryService(SERVICE_UUID);
                 updateStatus("Service found. Discovering characteristic...");
 
                 rxCharacteristic = await service.getCharacteristic(RX_CHAR_UUID);
