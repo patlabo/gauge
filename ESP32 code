@@ -1,0 +1,244 @@
+#include <BLEDevice.h>
+#include <BLEServer.h>
+#include <BLEUtils.h>
+#include <BLE2902.h>
+#include <Wire.h>
+#include <Adafruit_GFX.h>
+#include <Adafruit_SSD1306.h>
+#include <Arduino.h> // Include Arduino header for max() and min() functions
+
+// =========================================================
+// 1. CONSTANTS AND BLE SERVICE DEFINITIONS
+// =========================================================
+
+// *** These UUIDs MUST MATCH the HTML/JS code exactly ***
+#define SERVICE_UUID        "4fafc201-1fb5-459e-8fcc-c5c9c331914b"
+#define RX_CHAR_UUID        "beb5483e-36e1-4688-b7f5-ea07361b26a8" 
+
+// ADC and Sensor Parameters
+#define ADC_PIN                 36      // GPIO36 (VP) for analog read
+#define ADC_MAX_CODE            4095.0
+#define V_REF_ADC               3.3     // ESP32 max ADC voltage
+
+// Sensor Physical Parameters (0-150 PSI, based on datasheet)
+#define SENSOR_MAX_PSI          150.0
+#define SENSOR_V_MIN            0.5     // Sensor output at 0 PSI (Volts)
+#define SENSOR_V_MAX            4.5     // Sensor output at 150 PSI (Volts)
+
+// Voltage Divider Parameters: R-upper (3.6kΩ) and R-lower (4.5kΩ)
+// The measured voltage is V_sensor * (R_lower / (R_upper + R_lower))
+// R_upper = 3.6k, R_lower = 4.5k
+#define SCALING_RATIO           (4.5 / (3.6 + 4.5)) // New value: 4.5 / 8.1 ≈ 0.5555...
+
+// OLED Settings
+#define SCREEN_WIDTH            128
+#define SCREEN_HEIGHT           64
+#define OLED_RESET              -1
+#define SCREEN_ADDRESS          0x3C
+
+// Filter Settings (Moving Average)
+#define FILTER_SIZE             10
+
+// =========================================================
+// 2. VARIABLE DECLARATIONS
+// =========================================================
+
+// BLE Objects
+BLEServer* pServer = NULL;
+BLECharacteristic* pCharacteristic = NULL;
+bool deviceConnected = false;
+
+// OLED Object
+Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
+
+// Measurement and Filtering Variables
+float psiHistory[FILTER_SIZE]; // Use float for better smoothing accuracy
+int historyIndex = 0;        
+
+// Function Declarations
+double readSensorVoltage(int rawReading);
+double calculatePSI(double sensorVolts);
+void updateDisplay(float psi);
+void logToDisplay(const char* message);
+
+// =========================================================
+// 3. CALLBACKS AND BLE CONNECTIONS (Robust Advertising Restart)
+// =========================================================
+
+class MyServerCallbacks: public BLEServerCallbacks {
+    void onConnect(BLEServer* pServer) {
+      deviceConnected = true;
+      logToDisplay("BLE Connected");
+    };
+
+    void onDisconnect(BLEServer* pServer) {
+      deviceConnected = false;
+      logToDisplay("BLE Disconnected. Re-Advertising...");
+      
+      // Force a stop and restart of advertising to ensure it is discoverable again
+      BLEAdvertising *pAdvertising = BLEDevice::getAdvertising();
+      pAdvertising->stop(); 
+      pAdvertising->start();
+    }
+};
+
+// =========================================================
+// 4. SETUP
+// =========================================================
+
+void setup() {
+  Serial.begin(115200);
+  Wire.begin(); // Start I2C for OLED
+  
+  if(!display.begin(SSD1306_SWITCHCAPVCC, SCREEN_ADDRESS)) {
+    Serial.println(F("SSD1306 allocation failed"));
+    for(;;);
+  }
+  
+  // Set up ADC
+  analogReadResolution(12);
+  
+  // Initialize filter history
+  for(int i = 0; i < FILTER_SIZE; i++) {
+    psiHistory[i] = 0.0;
+  }
+
+  // --- Bluetooth Low Energy (BLE) Configuration ---
+  // The name set here is used for advertising (e.g., in Bluefly)
+  BLEDevice::init("ESP32_OilGauge"); 
+  pServer = BLEDevice::createServer();
+  pServer->setCallbacks(new MyServerCallbacks());
+
+  BLEService *pService = pServer->createService(SERVICE_UUID);
+  
+  pCharacteristic = pService->createCharacteristic(
+                      RX_CHAR_UUID,
+                      BLECharacteristic::PROPERTY_NOTIFY
+                    );
+  pCharacteristic->addDescriptor(new BLE2902());
+  pService->start();
+
+  // --- CRITICAL FIX FOR SCANNER VISIBILITY ---
+  // We rely on BLEDevice::init() for the name, but explicitly add the Service UUID
+  BLEAdvertising *pAdvertising = BLEDevice::getAdvertising();
+  pAdvertising->addServiceUUID(SERVICE_UUID);     // Explicitly include service UUID
+  pAdvertising->setScanResponse(true);            // Request a scan response for full info
+  
+  pAdvertising->start(); 
+  // ------------------------------------------
+
+  logToDisplay("Ready. BLE Advertising...");
+}
+
+// =========================================================
+// 5. MAIN LOOP
+// =========================================================
+
+void loop() {
+  // 1. Raw ADC Read and Voltage Conversion
+  int rawReading = analogRead(ADC_PIN);
+  double sensorVolts = readSensorVoltage(rawReading);
+  
+  // 2. PSI Calculation (using fixed datasheet min/max)
+  double currentPSI = calculatePSI(sensorVolts);
+
+  // 3. Moving Average Smoothing
+  psiHistory[historyIndex] = (float)currentPSI; 
+  historyIndex = (historyIndex + 1) % FILTER_SIZE;
+  
+  float sumPSI = 0.0;
+  for(int i = 0; i < FILTER_SIZE; i++) {
+    sumPSI += psiHistory[i];
+  }
+  float smoothedPSI = sumPSI / FILTER_SIZE;
+  
+  // 4. Round to one decimal for sending/display
+  float finalPSI_f = round(smoothedPSI * 10.0) / 10.0; 
+
+  // 5. Update Display and BLE
+  updateDisplay(finalPSI_f);
+
+  if (deviceConnected) {
+    // Send as a string with one decimal place (e.g., "45.2")
+    String psiString = String(finalPSI_f, 1); 
+    pCharacteristic->setValue(psiString.c_str());
+    pCharacteristic->notify();
+  }
+  
+  // --- DEBUGGING: Serial Output for Verification ---
+  Serial.print("Smoothed PSI: ");
+  Serial.println(finalPSI_f, 1);
+  // --------------------------------------------------
+
+  delay(100); 
+}
+
+
+// =========================================================
+// 6. PROCESSING FUNCTIONS
+// =========================================================
+
+/**
+ * Converts raw ADC reading into the Sensor Voltage (before the divider).
+ */
+double readSensorVoltage(int rawReading) {
+  // 1. Convert raw read to Volts measured (at GPIO36)
+  double measuredVolts = ((double)rawReading / ADC_MAX_CODE) * V_REF_ADC;
+
+  // 2. Scale back to find Sensor Voltage (before divider)
+  double sensorVolts = measuredVolts / SCALING_RATIO;
+  
+  return sensorVolts;
+}
+
+/**
+ * Converts the Sensor Voltage to a PSI value, using fixed datasheet values.
+ */
+double calculatePSI(double sensorVolts) {
+  double voltageSpan = SENSOR_V_MAX - SENSOR_V_MIN;
+  double pressure = (sensorVolts - SENSOR_V_MIN) / voltageSpan * SENSOR_MAX_PSI;
+
+  // Clamping to limits for safety
+  pressure = max(0.0, pressure);
+  pressure = min(SENSOR_MAX_PSI, pressure);
+  
+  return pressure;
+}
+
+/**
+ * Updates the OLED display, showing the large whole number.
+ */
+void updateDisplay(float psi) {
+  int psi_int = (int)round(psi); 
+
+  display.clearDisplay();
+  
+  // Large Integer PSI Value Display
+  display.setTextSize(5); 
+  display.setTextColor(SSD1306_WHITE);
+  display.setCursor(19, 5); 
+  display.print(psi_int);
+  
+  // BLE Connection Status
+  display.setTextSize(1);
+  display.setCursor(0, 56);
+  if (deviceConnected) {
+    display.print("BLE Connected");
+  } else {
+    display.print("Disconnected. Waiting...");
+  }
+  
+  display.display();
+}
+
+/**
+ * Displays temporary status message on OLED during boot.
+ */
+void logToDisplay(const char* message) {
+  display.clearDisplay();
+  display.setTextSize(1);
+  display.setTextColor(SSD1306_WHITE);
+  display.setCursor(0, 0);
+  display.println(message);
+  display.display();
+}
