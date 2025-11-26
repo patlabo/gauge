@@ -343,9 +343,7 @@
                 mockButton.disabled = true;
                 
                 bleDevice = await navigator.bluetooth.requestDevice({
-                    filters: 
-                        { name: 'OilPressureSensor' }, // Add filter by device name
-                    [{ services: [NUS_SERVICE_UUID] }],
+                    filters: [{ services: [NUS_SERVICE_UUID] }],
                 });
                 
                 bleDevice.addEventListener('gattserverdisconnected', onDisconnected);
