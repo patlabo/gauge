@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Live PSI Gauge - Final Display Version (Corrected)</title>
+    <title>Live PSI Gauge - Bluetooth Fix</title>
     <!-- Load Tailwind CSS for modern, responsive styling -->
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
@@ -91,14 +91,14 @@
                  <!-- Mock Data Button -->
                 <button id="mockButton" onclick="toggleMockData()"
                         class="flex-1 py-2 text-base font-medium rounded-xl transition-all duration-200 shadow-lg 
-                            bg-gray-700 hover:bg-gray-600 active:scale-95">
+                             bg-gray-700 hover:bg-gray-600 active:scale-95">
                     Mock Data
                 </button>
                 
                 <!-- Disconnect Button (Hidden until connected) -->
                 <button id="disconnectButton" onclick="disconnectDevice()"
                         class="flex-1 py-2 text-base font-medium rounded-xl transition-all duration-200 shadow-lg 
-                            bg-red-700 hover:bg-red-800 active:scale-95 hidden">
+                             bg-red-700 hover:bg-red-800 active:scale-95 hidden">
                     Disconnect
                 </button>
             </div>
@@ -133,23 +133,19 @@
 
         // --- UI & Orientation Management ---
 
-        /**
-         * Checks if the device is currently in landscape orientation.
-         */
         function isLandscape() {
             return window.matchMedia("(orientation: landscape)").matches;
         }
 
-        /**
-         * Toggles the visibility of the header and control panel on tap, but ONLY in landscape mode.
-         */
         function toggleControlsOnTap(event) {
             if (!isLandscape()) {
+                console.log("[UI] Not in landscape. Controls always visible.");
                 return;
             }
 
             // Don't hide if clicking on controls or header itself
             if (controlsContainer.contains(event.target) || headerContainer.contains(event.target)) {
+                 console.log("[UI] Clicked on controls/header. Not hiding.");
                 return;
             }
             
@@ -164,37 +160,40 @@
                     el.classList.remove(hideClass);
                     el.classList.add(showClass);
                 });
+                console.log("[UI] Toggled controls to VISIBLE.");
             } else {
                 elements.forEach(el => {
                     el.classList.remove(showClass);
                     el.classList.add(hideClass);
                 });
+                console.log("[UI] Toggled controls to HIDDEN.");
             }
         }
         
-        /**
-         * Re-applies the default landscape hiding logic if the orientation changes or on load.
-         */
         function checkOrientationLayout() {
+            console.log("[UI] Orientation check triggered.");
             const elements = [headerContainer, controlsContainer];
             const showClass = 'show-in-landscape';
             const hideClass = 'hide-in-landscape';
             
             if (isLandscape()) {
+                console.log("[UI] Currently in Landscape Mode.");
                 // In landscape, hide by default unless controlsVisible is true
                 if (!controlsVisible) {
                     elements.forEach(el => {
                         el.classList.remove(showClass);
                         el.classList.add(hideClass);
                     });
+                     console.log("[UI] Applying landscape-hide classes.");
                 }
             } else {
                 // In portrait, ensure visibility
                 controlsVisible = true;
-                 elements.forEach(el => {
+                elements.forEach(el => {
                     el.classList.remove(hideClass);
                     el.classList.remove(showClass);
                 });
+                console.log("[UI] Currently in Portrait Mode. Removing hide classes.");
             }
         }
         
@@ -204,50 +203,32 @@
 
         // --- Data & Display Logic ---
 
-        /**
-         * Utility to update the status text and optionally log messages.
-         */
         function updateStatus(text, isError = false, isMock = false) {
-            console.log(text);
+            console.log(`[STATUS] ${text}`); // Extra logging for status changes
             statusElement.textContent = `Status: ${text}`;
             if (isMock) {
-                // Purple for mock data status
                 statusElement.className = 'text-sm mt-1 text-purple-400';
             } else {
-                // Green for success/connected, Red for error
                 statusElement.className = `text-sm mt-1 ${isError ? 'text-red-500' : 'text-green-500'}`;
             }
         }
 
-        /**
-         * Core function to update the gauge display based on received data and apply custom colors.
-         */
         function updateGaugeDisplay(dataString) {
             const psi = parseFloat(dataString.trim());
             
             if (!isNaN(psi)) {
-                // Update value, ensuring one decimal place
                 psiValueElement.textContent = psi.toFixed(1); 
                 
-                // 1. Remove all color classes first
                 psiValueElement.classList.remove(...COLOR_CLASSES);
                 
-                // 2. Apply color based on custom thresholds
-                
-                // 0 to 10 PSI: RED
+                // Color logic
                 if (psi >= 0 && psi < 10) {
                     psiValueElement.classList.add('text-red-500');
-                } 
-                // 10 to 30 PSI: ORANGE
-                else if (psi >= 10 && psi < 30) {
+                } else if (psi >= 10 && psi < 30) {
                     psiValueElement.classList.add('text-orange-400');
-                } 
-                // 30 to 40 PSI: YELLOW
-                else if (psi >= 30 && psi < 40) {
+                } else if (psi >= 30 && psi < 40) {
                     psiValueElement.classList.add('text-yellow-400');
-                } 
-                // >= 40 PSI: WHITE (Nominal/Target)
-                else {
+                } else {
                     psiValueElement.classList.add('text-white');
                 }
 
@@ -259,13 +240,11 @@
             }
         }
         
-        /**
-         * Handler for data received from BLE characteristic.
-         */
         function handleCharacteristicValueChanged(event) {
             const value = event.target.value;
             const decoder = new TextDecoder('utf-8');
             const dataString = decoder.decode(value);
+            console.log(`[BLE Data] Received: ${dataString.trim()}`);
             updateGaugeDisplay(dataString);
         }
         
@@ -273,6 +252,7 @@
 
         window.toggleMockData = function() {
             if (isMockingData) {
+                console.log("[Mock] Attempting to STOP mocking.");
                 // STOP MOCKING
                 clearInterval(mockDataInterval);
                 isMockingData = false;
@@ -287,9 +267,11 @@
                 disconnectButton.classList.add('hidden');
                 
             } else {
+                console.log("[Mock] Attempting to START mocking.");
                 // START MOCKING
                 if (bleDevice && bleDevice.gatt.connected) {
                     updateStatus("Error: Disconnect real device first.", true);
+                    console.error("[Mock] Cannot start mock data: Device is connected.");
                     return;
                 }
                 isMockingData = true;
@@ -303,11 +285,9 @@
                 updateStatus("MOCK Data Running", false, true);
 
                 mockDataInterval = setInterval(() => {
-                    // Simulate pressure changes, cycling through color ranges
                     const time = Date.now() / 1000;
-                    // Creates a sine wave that ranges roughly between 5 and 65 PSI
                     let newPsi = 35 + 30 * Math.sin(time * 0.5) + (Math.random() * 5); 
-                    newPsi = Math.max(0, newPsi); // Ensure non-negative
+                    newPsi = Math.max(0, newPsi); 
                     currentMockPsi = newPsi;
                     
                     updateGaugeDisplay(currentMockPsi.toFixed(1));
@@ -321,11 +301,15 @@
             if (bleDevice && bleDevice.gatt.connected) {
                 console.log("[BLE] Disconnecting...");
                 bleDevice.gatt.disconnect();
+            } else {
+                console.warn("[BLE] Disconnect called, but no device was connected.");
             }
             // onDisconnected will handle the UI reset
         }
 
         window.requestDeviceAndConnect = async function() {
+            console.log("[BLE] Connect button clicked.");
+
             if (isMockingData) {
                 updateStatus("Error: Stop mock data first.", true);
                 return;
@@ -342,18 +326,33 @@
                 connectButton.textContent = "Scanning...";
                 mockButton.disabled = true;
                 
+                console.log("[BLE] Calling navigator.bluetooth.requestDevice...");
+                
+                // --- FIX: COMBINING NAME AND SERVICE INTO A SINGLE FILTER OBJECT ---
+                // This ensures the device is listed only if it matches the name AND provides the NUS service.
                 bleDevice = await navigator.bluetooth.requestDevice({
-                    filters: [{ services: [NUS_SERVICE_UUID] }],
+                    filters: [
+                        { name: 'OilPressureSensor', services: [NUS_SERVICE_UUID] }
+                    ],
+                    optionalServices: [NUS_SERVICE_UUID]
                 });
+                // ------------------------------------------------------------------
                 
                 bleDevice.addEventListener('gattserverdisconnected', onDisconnected);
+                console.log(`[BLE] Device selected: ${bleDevice.name}`);
                 
                 updateStatus(`Connecting to ${bleDevice.name}...`);
                 await connectGATT();
 
             } catch (error) {
                 console.error("[BLE] Request/Connection Error:", error);
-                updateStatus(`Connection Error`, true);
+                // Check if it's the user canceling the prompt
+                if (error.message.includes("User cancelled the request")) {
+                    updateStatus("Connection cancelled by user.", true);
+                } else {
+                    updateStatus(`Connection Error`, true);
+                }
+                
                 connectButton.disabled = false;
                 connectButton.textContent = "Connect to ESP32 (BLE)";
                 mockButton.disabled = false;
@@ -362,6 +361,7 @@
 
         async function connectGATT() {
             try {
+                console.log("[BLE] Establishing GATT connection...");
                 const server = await bleDevice.gatt.connect();
                 updateStatus("Connected. Discovering services...");
                 
@@ -379,10 +379,13 @@
                 connectButton.classList.add('hidden');
                 disconnectButton.classList.remove('hidden');
                 mockButton.disabled = true;
+                console.log("[BLE] Connection successful and notifications started.");
                 
             } catch (error) {
-                console.error("[BLE] GATT Error:", error);
+                console.error("[BLE] GATT Error during service/characteristic discovery:", error);
                 updateStatus(`GATT Error: ${error.message}`, true);
+                
+                // Cleanup UI and state on GATT failure
                 connectButton.disabled = false;
                 connectButton.textContent = "Connect to ESP32 (BLE)";
                 connectButton.classList.remove('hidden');
@@ -395,7 +398,7 @@
         }
 
         function onDisconnected() {
-            console.log("[BLE] Device disconnected.");
+            console.log("[BLE] Device disconnected (Event triggered).");
             updateStatus(`Disconnected.`, true);
             updateGaugeDisplay('--.-'); // Reset display
             
@@ -409,6 +412,7 @@
 
         // --- Initialization on load ---
         window.onload = () => {
+            console.log("[App Init] Window loaded.");
             connectButton.disabled = false;
             mockButton.disabled = false; 
             
