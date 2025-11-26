@@ -1,0 +1,449 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Live PSI Gauge - Web Bluetooth Client</title>
+    <!-- Load Tailwind CSS for modern, responsive styling -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* Custom Font */
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@100..900&display=swap');
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #0d1117; /* Dark background */
+        }
+        .gauge-display {
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            line-height: 0.8; /* Tighten up line spacing for the large numbers */
+        }
+        .psi-unit {
+            font-size: 2rem;
+            color: #6b7280; /* Gray-500 */
+            margin-top: -1.5rem; /* Pull unit closer to the number */
+        }
+        /* Ensure the body and html take up full height */
+        html, body {
+            height: 100%;
+            margin: 0;
+            overflow-y: auto; 
+            overflow-x: hidden;
+        }
+        
+        /* --- LANDSCAPE FULL-SCREEN HIDING LOGIC (For clean display/recording) --- */
+        @media (orientation: landscape) {
+            /* Base hidden state for header and controls in landscape mode */
+            .hide-in-landscape {
+            opacity: 0 !important;
+            pointer-events: none !important; 
+            visibility: hidden !important;
+            }
+            
+            /* State applied by JS on tap */
+            .show-in-landscape {
+            opacity: 1 !important;
+            pointer-events: auto !important; 
+            visibility: visible !important;
+            }
+        }
+        /* --- END LANDSCAPE LOGIC --- */
+    </style>
+</head>
+<body class="text-white">
+    <!-- Main Flex Container: Column layout, minimum full screen height -->
+    <div id="mainAppContainer" class="flex flex-col min-h-screen p-4 pb-4 md:pb-8"> 
+        
+        <!-- HEADER CONTAINER (Hidden by default in landscape) -->
+        <header id="headerContainer" class="text-center py-2 transition-opacity duration-300 hide-in-landscape">
+            <h1 class="text-xl font-bold text-blue-400">PSI Live Gauge</h1>
+            <p id="status" class="text-sm mt-1 text-yellow-500">
+                Status: Ready to Connect
+            </p>
+        </header>
+
+        <!-- Main Gauge Display: flex-grow ensures it fills available space dynamically -->
+        <main class="flex-grow gauge-display">
+            <div class="p-8 rounded-xl shadow-2xl bg-gray-800 bg-opacity-50 gauge-card">
+                <div class="overflow-x-auto"> 
+                    <!-- PSI Value Display - Large and dynamic -->
+                    <span id="psiValue" class="text-9xl md:text-[12rem] font-extrabold tracking-tight text-white transition-all duration-300 whitespace-nowrap">
+                        <!-- MODIFICATION: Changed default placeholder from '--.-' to '--' -->
+                        --
+                    </span>
+                </div>
+                <div class="psi-unit text-center">PSI</div>
+            </div>
+        </main>
+
+        <!-- CONTROLS CONTAINER (Hidden by default in landscape) -->
+        <div id="controlsContainer" class="p-2 pt-4 bg-gray-900 shadow-2xl border-t border-gray-700 z-10 w-full mx-auto max-w-lg rounded-t-xl transition-opacity duration-300 hide-in-landscape">
+            
+            <!-- Bluetooth Connect Button -->
+            <button id="connectButton" onclick="requestDeviceAndConnect()"
+                    class="w-full py-3 text-lg font-semibold rounded-xl transition-all duration-200 shadow-lg 
+                           bg-blue-600 hover:bg-blue-700 active:scale-95">
+                Connect to ESP32 (BLE)
+            </button>
+            
+            <div class="flex space-x-3 mt-3">
+                <!-- Mock Data Button -->
+                <button id="mockButton" onclick="toggleMockData()"
+                        class="flex-1 py-2 text-base font-medium rounded-xl transition-all duration-200 shadow-lg 
+                             bg-gray-700 hover:bg-gray-600 active:scale-95">
+                    Mock Data
+                </button>
+                
+                <!-- Disconnect Button (Hidden until connected) -->
+                <button id="disconnectButton" onclick="disconnectDevice()"
+                        class="flex-1 py-2 text-base font-medium rounded-xl transition-all duration-200 shadow-lg 
+                             bg-red-700 hover:bg-red-800 active:scale-95 hidden">
+                    Disconnect
+                </button>
+            </div>
+        </div>
+        
+    </div>
+
+    <script>
+        // --- CONSTANTS: UUIDs MUST match the C++ firmware exactly ---
+        const SERVICE_UUID = '4fafc201-1fb5-459e-8fcc-c5c9c331914b';
+        const RX_CHAR_UUID = 'beb5483e-36e1-4688-b7f5-ea07361b26a8'; 
+        // -----------------------------------------------------------
+
+        // State Variables
+        let bleDevice = null;
+        let rxCharacteristic = null;
+        let mockDataInterval = null; 
+        let isMockingData = false;
+        let currentMockPsi = 50.0; 
+        let controlsVisible = true; 
+
+        // UI Elements
+        const psiValueElement = document.getElementById('psiValue');
+        const statusElement = document.getElementById('status');
+        const connectButton = document.getElementById('connectButton');
+        const mockButton = document.getElementById('mockButton');
+        const disconnectButton = document.getElementById('disconnectButton');
+        const headerContainer = document.getElementById('headerContainer');
+        const controlsContainer = document.getElementById('controlsContainer');
+        
+        // Tailwind color classes for PSI value
+        const COLOR_CLASSES = ['text-white', 'text-yellow-400', 'text-orange-400', 'text-red-500', 'text-blue-400', 'text-green-500'];
+
+        // --- UI & Orientation Management ---
+
+        function isLandscape() {
+            return window.matchMedia("(orientation: landscape)").matches;
+        }
+
+        /**
+         * Toggles the visibility of the header and controls when tapping the screen
+         * in landscape mode (useful for clean video recording overlays).
+         */
+        function toggleControlsOnTap(event) {
+            if (!isLandscape()) {
+                console.log("[UI] Not in landscape. Controls always visible.");
+                return;
+            }
+
+            // Don't hide if clicking on controls or header itself
+            if (controlsContainer.contains(event.target) || headerContainer.contains(event.target)) {
+                 console.log("[UI] Clicked on controls/header. Not hiding.");
+                return;
+            }
+            
+            controlsVisible = !controlsVisible;
+
+            const elements = [headerContainer, controlsContainer];
+            const showClass = 'show-in-landscape';
+            const hideClass = 'hide-in-landscape';
+
+            if (controlsVisible) {
+                elements.forEach(el => {
+                    el.classList.remove(hideClass);
+                    el.classList.add(showClass);
+                });
+                console.log("[UI] Toggled controls to VISIBLE.");
+            } else {
+                elements.forEach(el => {
+                    el.classList.remove(showClass);
+                    el.classList.add(hideClass);
+                });
+                console.log("[UI] Toggled controls to HIDDEN.");
+            }
+        }
+        
+        /**
+         * Checks orientation and applies or removes the landscape hiding classes.
+         */
+        function checkOrientationLayout() {
+            console.log("[UI] Orientation check triggered.");
+            const elements = [headerContainer, controlsContainer];
+            const showClass = 'show-in-landscape';
+            const hideClass = 'hide-in-landscape';
+            
+            if (isLandscape()) {
+                console.log("[UI] Currently in Landscape Mode.");
+                // In landscape, hide by default unless controlsVisible is true
+                if (!controlsVisible) {
+                    elements.forEach(el => {
+                        el.classList.remove(showClass);
+                        el.classList.add(hideClass);
+                    });
+                     console.log("[UI] Applying landscape-hide classes.");
+                }
+            } else {
+                // In portrait, ensure visibility
+                controlsVisible = true;
+                elements.forEach(el => {
+                    el.classList.remove(hideClass);
+                    el.classList.remove(showClass);
+                });
+                console.log("[UI] Currently in Portrait Mode. Removing hide classes.");
+            }
+        }
+        
+        window.addEventListener('resize', checkOrientationLayout);
+        document.body.addEventListener('click', toggleControlsOnTap);
+
+
+        // --- Data & Display Logic ---
+
+        function updateStatus(text, isError = false, isMock = false) {
+            console.log(`[STATUS] ${text}`); 
+            statusElement.textContent = `Status: ${text}`;
+            if (isMock) {
+                statusElement.className = 'text-sm mt-1 text-purple-400';
+            } else {
+                statusElement.className = `text-sm mt-1 ${isError ? 'text-red-500' : 'text-green-500'}`;
+            }
+        }
+
+        /**
+         * Updates the large gauge display with color coding based on PSI value.
+         */
+        function updateGaugeDisplay(dataString) {
+            // Parse the string sent by the ESP32 (e.g., "45.2")
+            const psi = parseFloat(dataString.trim());
+            
+            if (!isNaN(psi)) {
+                // *** MODIFICATION 1: Convert to integer using Math.round() ***
+                const roundedPsi = Math.round(psi);
+                
+                // Display the integer value (no toFixed() needed)
+                psiValueElement.textContent = roundedPsi.toString(); 
+                
+                psiValueElement.classList.remove(...COLOR_CLASSES);
+                
+                // Color coding logic uses the rounded integer value
+                if (roundedPsi >= 0 && roundedPsi < 10) {
+                    psiValueElement.classList.add('text-red-500'); // Dangerously low
+                } else if (roundedPsi >= 10 && roundedPsi < 30) {
+                    psiValueElement.classList.add('text-orange-400'); // Low/Warmup
+                } else if (roundedPsi >= 30 && roundedPsi < 40) {
+                    psiValueElement.classList.add('text-yellow-400'); // Warming up
+                } else {
+                    psiValueElement.classList.add('text-white'); // Normal operating pressure
+                }
+
+            } else {
+                // *** MODIFICATION 2: Reset display to integer placeholder ***
+                psiValueElement.textContent = '--';
+                psiValueElement.classList.remove(...COLOR_CLASSES);
+                psiValueElement.classList.add('text-white');
+            }
+        }
+        
+        /**
+         * Callback function when the BLE characteristic's value changes (notification).
+         */
+        function handleCharacteristicValueChanged(event) {
+            const value = event.target.value;
+            const decoder = new TextDecoder('utf-8');
+            const dataString = decoder.decode(value);
+            console.log(`[BLE Data] Received: ${dataString.trim()}`);
+            updateGaugeDisplay(dataString);
+        }
+        
+        // --- Mock Data Functionality ---
+
+        window.toggleMockData = function() {
+            if (isMockingData) {
+                console.log("[Mock] Attempting to STOP mocking.");
+                // STOP MOCKING
+                clearInterval(mockDataInterval);
+                isMockingData = false;
+                mockButton.textContent = "Mock Data";
+                mockButton.classList.remove('bg-red-600', 'hover:bg-red-700');
+                mockButton.classList.add('bg-gray-700', 'hover:bg-gray-600');
+                
+                updateGaugeDisplay('--'); // Cleared up placeholder consistency
+                updateStatus("Ready to Connect");
+                
+                connectButton.disabled = false;
+                disconnectButton.classList.add('hidden');
+                
+            } else {
+                console.log("[Mock] Attempting to START mocking.");
+                // START MOCKING
+                if (bleDevice && bleDevice.gatt.connected) {
+                    updateStatus("Error: Disconnect real device first.", true);
+                    console.error("[Mock] Cannot start mock data: Device is connected.");
+                    return;
+                }
+                isMockingData = true;
+                mockButton.textContent = "Stop Mocking";
+                mockButton.classList.remove('bg-gray-700', 'hover:bg-gray-600');
+                mockButton.classList.add('bg-red-600', 'hover:bg-red-700');
+                
+                connectButton.disabled = true;
+                disconnectButton.classList.add('hidden');
+                
+                updateStatus("MOCK Data Running", false, true);
+
+                // Simulate fluctuating oil pressure
+                mockDataInterval = setInterval(() => {
+                    const time = Date.now() / 1000;
+                    // Sin wave between ~5 and ~65 PSI with random noise
+                    let newPsi = 35 + 30 * Math.sin(time * 0.5) + (Math.random() * 5); 
+                    newPsi = Math.max(0, newPsi); 
+                    currentMockPsi = newPsi;
+                    
+                    // *** MODIFICATION 3: Round the mock data before sending to display update ***
+                    const integerPsiString = Math.round(currentMockPsi).toString();
+                    updateGaugeDisplay(integerPsiString);
+                }, 100);
+            }
+        }
+
+        // --- Bluetooth Logic (omitted for brevity, no change needed here) ---
+        
+        window.disconnectDevice = function() {
+            if (bleDevice && bleDevice.gatt.connected) {
+                console.log("[BLE] Disconnecting...");
+                bleDevice.gatt.disconnect();
+            } else {
+                console.warn("[BLE] Disconnect called, but no device was connected.");
+            }
+            // onDisconnected will handle the UI reset
+        }
+
+        window.requestDeviceAndConnect = async function() {
+            console.log("[BLE] Connect button clicked.");
+
+            if (isMockingData) {
+                updateStatus("Error: Stop mock data first.", true);
+                return;
+            }
+
+            if (!navigator.bluetooth) {
+                updateStatus("Error: Web Bluetooth not supported.", true);
+                return;
+            }
+
+            try {
+                updateStatus("Scanning...");
+                connectButton.disabled = true;
+                connectButton.textContent = "Scanning...";
+                mockButton.disabled = true;
+                
+                console.log("[BLE] Calling navigator.bluetooth.requestDevice...");
+                
+                // Filter for devices advertising our service UUID
+                bleDevice = await navigator.bluetooth.requestDevice({
+                    filters: [{ services: [SERVICE_UUID] }],
+                    optionalServices: [SERVICE_UUID]
+                });
+                
+                bleDevice.addEventListener('gattserverdisconnected', onDisconnected);
+                console.log(`[BLE] Device selected: ${bleDevice.name}`);
+                
+                updateStatus(`Connecting to ${bleDevice.name}...`);
+                await connectGATT();
+
+            } catch (error) {
+                console.error("[BLE] Request/Connection Error:", error);
+                // Check if it's the user canceling the prompt
+                if (error.message.includes("User cancelled the request")) {
+                    updateStatus("Connection cancelled by user.", true);
+                } else {
+                    updateStatus(`Connection Error`, true);
+                }
+                
+                connectButton.disabled = false;
+                connectButton.textContent = "Connect to ESP32 (BLE)";
+                mockButton.disabled = false;
+            }
+        }
+
+        async function connectGATT() {
+            try {
+                console.log("[BLE] Establishing GATT connection...");
+                const server = await bleDevice.gatt.connect();
+                updateStatus("Connected. Discovering services...");
+                
+                const service = await server.getPrimaryService(SERVICE_UUID);
+                updateStatus("Service found. Discovering characteristic...");
+
+                rxCharacteristic = await service.getCharacteristic(RX_CHAR_UUID);
+                updateStatus("Subscribing to data stream...");
+
+                await rxCharacteristic.startNotifications();
+                rxCharacteristic.addEventListener('characteristicvaluechanged', handleCharacteristicValueChanged);
+
+                // FINAL SUCCESS STATE
+                updateStatus("CONNECTED (LIVE)");
+                connectButton.classList.add('hidden');
+                disconnectButton.classList.remove('hidden');
+                mockButton.disabled = true;
+                console.log("[BLE] Connection successful and notifications started.");
+                
+            } catch (error) {
+                console.error("[BLE] GATT Error during service/characteristic discovery:", error);
+                updateStatus(`GATT Error: ${error.message}`, true);
+                
+                // Cleanup UI and state on GATT failure
+                connectButton.disabled = false;
+                connectButton.textContent = "Connect to ESP32 (BLE)";
+                connectButton.classList.remove('hidden');
+                disconnectButton.classList.add('hidden');
+                mockButton.disabled = false;
+                if (bleDevice && bleDevice.gatt.connected) {
+                    bleDevice.gatt.disconnect();
+                }
+            }
+        }
+
+        function onDisconnected() {
+            console.log("[BLE] Device disconnected (Event triggered).");
+            updateStatus(`Disconnected.`, true);
+            updateGaugeDisplay('--'); // Cleaned up placeholder consistency
+            
+            // UI Reset
+            connectButton.disabled = false;
+            connectButton.textContent = "Connect to ESP32 (BLE)";
+            connectButton.classList.remove('hidden');
+            disconnectButton.classList.add('hidden');
+            mockButton.disabled = false;
+        }
+
+        // --- Initialization on load ---
+        window.onload = () => {
+            console.log("[App Init] Window loaded.");
+            connectButton.disabled = false;
+            mockButton.disabled = false; 
+            
+            // *** MODIFICATION 4: Initial display set to integer placeholder ***
+            psiValueElement.textContent = '--';
+            updateStatus("Ready to Connect");
+            
+            // Initial check to hide controls if starting in landscape
+            checkOrientationLayout();
+        };
+
+    </script>
+</body>
+</html>
